@@ -301,10 +301,28 @@ export function ProductReceiptDetailsModal({
                     </div>
                     
                     <Separator className="my-4" />
-                    
-                    <div className="flex justify-between items-center text-lg font-semibold">
-                      <span>Total Value:</span>
-                      <span className="text-green-600">{formatCurrency(totalValue)}</span>
+
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-gray-600">Items Subtotal:</span>
+                      <span>{formatCurrency(totalValue)}</span>
+                    </div>
+                    {Number(receipt.shipping_cost) > 0 && (
+                      <div className="flex justify-between items-center text-sm mt-1">
+                        <span className="text-gray-600">Shipping Cost:</span>
+                        <span>{formatCurrency(Number(receipt.shipping_cost))}</span>
+                      </div>
+                    )}
+                    {Number(receipt.logistics_cost) > 0 && (
+                      <div className="flex justify-between items-center text-sm mt-1">
+                        <span className="text-gray-600">Logistics Cost:</span>
+                        <span>{formatCurrency(Number(receipt.logistics_cost))}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between items-center text-lg font-semibold mt-2">
+                      <span>{(Number(receipt.shipping_cost) > 0 || Number(receipt.logistics_cost) > 0) ? "Landed Total:" : "Total Value:"}</span>
+                      <span className="text-green-600">
+                        {formatCurrency(totalValue + Number(receipt.shipping_cost || 0) + Number(receipt.logistics_cost || 0))}
+                      </span>
                     </div>
                   </CardContent>
                 </Card>

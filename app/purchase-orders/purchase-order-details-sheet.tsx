@@ -307,6 +307,41 @@ export function PurchaseOrderDetailsSheet({ orderId, open, onOpenChange, onOrder
                   </div>
                 </CardContent>
               </Card>
+
+              {/* Landed Cost - captured at creation, previously never shown here */}
+              {(Number(order.shipping_cost) > 0 || Number(order.logistics_cost) > 0) && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Coins className="h-4 w-4" />
+                      Landed Cost
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Items Subtotal</span>
+                      <span>{formatCurrency(orderTotal)}</span>
+                    </div>
+                    {Number(order.shipping_cost) > 0 && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Shipping Cost</span>
+                        <span>{formatCurrency(order.shipping_cost || 0)}</span>
+                      </div>
+                    )}
+                    {Number(order.logistics_cost) > 0 && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Logistics Cost</span>
+                        <span>{formatCurrency(order.logistics_cost || 0)}</span>
+                      </div>
+                    )}
+                    <Separator />
+                    <div className="flex justify-between text-sm font-bold text-primary">
+                      <span>Landed Total</span>
+                      <span>{formatCurrency(orderTotal + Number(order.shipping_cost || 0) + Number(order.logistics_cost || 0))}</span>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
             </>
           ) : null}
         </div>

@@ -7,9 +7,8 @@ export const metadata = {
   description: "View and manage customer information",
 }
 
-export default async function CustomerProfilePage({ params }: { params: { id: string } }) {
-  // Ensure params is destructured properly
-  const id = params?.id
+export default async function CustomerProfilePage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   return (
     <Suspense
       fallback={
