@@ -66,7 +66,6 @@ export function CreateCustomerModal({
   const [company, setCompany] = useState("");
   const [address, setAddress] = useState("");
   const [city, setCity] = useState("");
-  const [state, setState] = useState("");
   const [country, setCountry] = useState("Kenya");
   const [postalCode, setPostalCode] = useState("");
   const [customerType, setCustomerType] = useState("individual");
@@ -137,7 +136,6 @@ export function CreateCustomerModal({
     setCompany("");
     setAddress("");
     setCity("");
-    setState("");
     setCountry("Kenya");
     setPostalCode("");
     setCustomerType("individual");
@@ -405,7 +403,6 @@ export function CreateCustomerModal({
       currentEmail: email,
       currentAddress: address,
       currentCity: city,
-      currentState: state,
       currentCountry: country,
       currentPostalCode: postalCode,
       currentPreferredCommunication: preferredCommunication,
@@ -448,7 +445,6 @@ export function CreateCustomerModal({
         status: status,
         address: submissionData.currentAddress.trim() || null,
         city: submissionData.currentCity.trim() || null,
-        state: submissionData.currentState.trim() || null,
         country: submissionData.currentCountry.trim() || null,
         postal_code: submissionData.currentPostalCode.trim() || null,
         region: submissionData.currentRegion || null,
@@ -1141,7 +1137,7 @@ export function CreateCustomerModal({
                 />
               </div>
               
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="city">City</Label>
                   <Input
@@ -1149,17 +1145,6 @@ export function CreateCustomerModal({
                     value={city}
                     onChange={(e) => setCity(e.target.value)}
                     placeholder="Nairobi"
-                    disabled={isSubmitting || authLoading}
-                  />
-                </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="state">State/Province</Label>
-                  <Input
-                    id="state"
-                    value={state}
-                    onChange={(e) => setState(e.target.value)}
-                    placeholder="Nairobi County"
                     disabled={isSubmitting || authLoading}
                   />
                 </div>

@@ -71,7 +71,6 @@ export function EditCustomerModal({
   const [company, setCompany] = useState("");
   const [address, setAddress] = useState("");
   const [city, setCity] = useState("");
-  const [state, setState] = useState("");
   const [country, setCountry] = useState("");
   const [postalCode, setPostalCode] = useState("");
   const [status, setStatus] = useState("");
@@ -132,7 +131,6 @@ export function EditCustomerModal({
       setCompany(customer.company || "");
       setAddress(customer.address || "");
       setCity(customer.city || "");
-      setState(customer.state || "");
       setCountry(customer.country || "");
       setPostalCode(customer.postal_code || "");
       setStatus(customer.status || "active");
@@ -312,7 +310,6 @@ export function EditCustomerModal({
     setCompany("");
     setAddress("");
     setCity("");
-    setState("");
     setCountry("");
     setPostalCode("");
     setStatus("active");
@@ -488,7 +485,6 @@ export function EditCustomerModal({
       currentEmail: email,
       currentAddress: address,
       currentCity: city,
-      currentState: state,
       currentCountry: country,
       currentPostalCode: postalCode,
       currentPreferredCommunication: preferredCommunication,
@@ -528,7 +524,6 @@ export function EditCustomerModal({
         phone: submissionData.currentPhone.trim() || null,
         address: submissionData.currentAddress.trim() || null,
         city: submissionData.currentCity.trim() || null,
-        state: submissionData.currentState.trim() || null,
         country: submissionData.currentCountry.trim() || null,
         postal_code: submissionData.currentPostalCode.trim() || null,
         region: submissionData.currentRegion || null,
@@ -1188,7 +1183,7 @@ export function EditCustomerModal({
                 />
               </div>
               
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="city">City</Label>
                   <Input
@@ -1196,17 +1191,6 @@ export function EditCustomerModal({
                     value={city}
                     onChange={(e) => setCity(e.target.value)}
                     placeholder="Nairobi"
-                    disabled={isSubmitting || isLoadingAccount}
-                  />
-                </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="state">State/Province</Label>
-                  <Input
-                    id="state"
-                    value={state}
-                    onChange={(e) => setState(e.target.value)}
-                    placeholder="Nairobi County"
                     disabled={isSubmitting || isLoadingAccount}
                   />
                 </div>

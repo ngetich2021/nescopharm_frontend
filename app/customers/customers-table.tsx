@@ -35,7 +35,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { CustomerProfile } from "./[id]/customer-profile"
-import { CreateCustomerSheet } from "./components/create-customer"
+import { CreateCustomerModal } from "./components/CreateCustomerModal"
 import { useAuth } from "@/lib/auth-context"
 import { useToast } from "@/hooks/use-toast"
 import { useDataCache } from "@/lib/data-cache" // Import the data cache hook
@@ -88,10 +88,11 @@ export default function Customers() {
     }
   )
 
-  const handleCustomerCreated = (newCustomer: Customer) => {
+  const handleCustomerCreated = () => {
+    // CreateCustomerModal already shows its own success/"submitted for
+    // review" toast - just refresh the list here.
     invalidateCache() // Invalidate the cache so data will be refetched
     fetchCustomers() // Force refresh the data
-    toast({ title: "Success", description: "Customer created successfully." })
   }
 
   const handleUpdateCustomer = async (id: string, updates: Partial<Customer>) => {
@@ -695,10 +696,10 @@ export default function Customers() {
         />
       )}
 
-      <CreateCustomerSheet
-        isOpen={isCreateModalOpen}
+      <CreateCustomerModal
+        open={isCreateModalOpen}
         onOpenChange={setIsCreateModalOpen}
-        onCustomerCreated={handleCustomerCreated}
+        onSuccess={handleCustomerCreated}
       />
     </>
   )
