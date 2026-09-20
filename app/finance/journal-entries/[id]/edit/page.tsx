@@ -4,16 +4,18 @@ import { useState, useEffect } from "react"
 import { useRouter, useParams } from "next/navigation"
 import { useForm, useFieldArray } from "react-hook-form"
 import { format } from "date-fns"
-import { 
-  ArrowLeft, 
-  Calendar as CalendarIcon, 
-  Plus, 
-  Trash2, 
-  Save, 
+import {
+  ArrowLeft,
+  Calendar as CalendarIcon,
+  Plus,
+  Trash2,
+  Save,
   Calculator,
   AlertCircle,
   Loader2,
-  CheckCircle2
+  CheckCircle2,
+  Check,
+  ChevronsUpDown
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -27,6 +29,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import {
   Card,
   CardContent,
@@ -88,7 +91,8 @@ export default function EditJournalEntryPage() {
   const [totalDebits, setTotalDebits] = useState(0)
   const [totalCredits, setTotalCredits] = useState(0)
   const [entry, setEntry] = useState<JournalEntry | null>(null)
-  
+  const [accountSearchOpen, setAccountSearchOpen] = useState<{ [key: number]: boolean }>({})
+
   const entryId = params.id as string
 
   const form = useForm<JournalEntryFormData>({
@@ -515,26 +519,61 @@ export default function EditJournalEntryPage() {
                          <TableRow key={field.id} className="group">
                             <TableCell className="align-top">
                                <div className="space-y-1">
-                                  <Select
-                                     onValueChange={(value) => {
-                                        const formValues = form.getValues();
-                                        formValues.items[index].chart_of_account_id = value;
-                                        form.setValue("items", formValues.items);
-                                     }}
-                                     defaultValue={field.chart_of_account_id}
+                                  <Popover
+                                     open={accountSearchOpen[index] || false}
+                                     onOpenChange={(open) => setAccountSearchOpen(prev => ({ ...prev, [index]: open }))}
                                   >
-                                     <SelectTrigger className={cn(!form.watch(`items.${index}.chart_of_account_id`) && "border-rose-300 ring-rose-300 focus:ring-rose-300")}>
-                                        <SelectValue placeholder="Select Account" />
-                                     </SelectTrigger>
-                                     <SelectContent>
-                                        {accounts.map(account => (
-                                           <SelectItem key={account.id} value={account.id.toString()}>
-                                              <span className="font-mono text-muted-foreground mr-2">{account.account_code}</span>
-                                              {account.account_name}
-                                           </SelectItem>
-                                        ))}
-                                     </SelectContent>
-                                  </Select>
+                                     <PopoverTrigger asChild>
+                                        <Button
+                                           variant="outline"
+                                           role="combobox"
+                                           aria-expanded={accountSearchOpen[index] || false}
+                                           className={cn(
+                                              "w-full justify-between font-normal",
+                                              !form.watch(`items.${index}.chart_of_account_id`) && "border-rose-300 ring-rose-300 focus:ring-rose-300"
+                                           )}
+                                        >
+                                           {form.watch(`items.${index}.chart_of_account_id`) ? (
+                                              (() => {
+                                                 const account = accounts.find(a => a.id.toString() === form.watch(`items.${index}.chart_of_account_id`))
+                                                 return account ? (
+                                                    <span className="truncate">
+                                                       <span className="font-mono text-muted-foreground mr-2">{account.account_code}</span>
+                                                       {account.account_name}
+                                                    </span>
+                                                 ) : "Select Account"
+                                              })()
+                                           ) : "Select Account"}
+                                           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                        </Button>
+                                     </PopoverTrigger>
+                                     <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                                        <Command>
+                                           <CommandInput placeholder="Search accounts..." />
+                                           <CommandList>
+                                              <CommandEmpty>No account found.</CommandEmpty>
+                                              <CommandGroup>
+                                                 {accounts.map(account => (
+                                                    <CommandItem
+                                                       key={account.id}
+                                                       value={`${account.account_code} ${account.account_name}`}
+                                                       onSelect={() => {
+                                                          const formValues = form.getValues();
+                                                          formValues.items[index].chart_of_account_id = account.id.toString();
+                                                          form.setValue("items", formValues.items);
+                                                          setAccountSearchOpen(prev => ({ ...prev, [index]: false }))
+                                                       }}
+                                                    >
+                                                       <Check className={cn("mr-2 h-4 w-4", form.watch(`items.${index}.chart_of_account_id`) === account.id.toString() ? "opacity-100" : "opacity-0")} />
+                                                       <span className="font-mono text-muted-foreground mr-2">{account.account_code}</span>
+                                                       {account.account_name}
+                                                    </CommandItem>
+                                                 ))}
+                                              </CommandGroup>
+                                           </CommandList>
+                                        </Command>
+                                     </PopoverContent>
+                                  </Popover>
                                   {/* Show account type helper */}
                                   {form.watch(`items.${index}.chart_of_account_id`) && (
                                      <div className="text-[10px] text-muted-foreground px-1">

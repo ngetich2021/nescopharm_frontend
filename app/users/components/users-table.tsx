@@ -5,7 +5,7 @@ import type React from "react"
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Loader2, PlusCircle } from "lucide-react"
+import { Loader2, PlusCircle, Check, ChevronsUpDown } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { 
   Sheet,
@@ -18,7 +18,9 @@ import {
 } from "@/components/ui/sheet"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { cn } from "@/lib/utils"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
@@ -65,6 +67,8 @@ export function UsersTable() {
   const [softDeletingUser, setSoftDeletingUser] = useState<UserData | null>(null)
   const [viewingUser, setViewingUser] = useState<UserData | null>(null)
   const [isViewOpen, setIsViewOpen] = useState(false)
+  const [selectedRoleId, setSelectedRoleId] = useState("")
+  const [roleSearchOpen, setRoleSearchOpen] = useState(false)
   const { toast } = useToast()
   const { userProfile } = useAuth()
 
@@ -279,11 +283,13 @@ export function UsersTable() {
 
   const openCreateModal = () => {
     setEditingUser(null)
+    setSelectedRoleId("")
     setIsModalOpen(true)
   }
 
   const openEditModal = (user: UserData) => {
     setEditingUser(user)
+    setSelectedRoleId(user.role_id || "")
     setIsModalOpen(true)
   }
 
@@ -471,17 +477,67 @@ export function UsersTable() {
                           Role
                         </Label>
                         <div className="col-span-3">
-                          <Select name="role_id" defaultValue={editingUser?.role_id || ""}>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select a role" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="__no_role__">No role</SelectItem>
-                              {roles.map((r:any) => (
-                                <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <Popover open={roleSearchOpen} onOpenChange={setRoleSearchOpen}>
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant="outline"
+                                role="combobox"
+                                aria-expanded={roleSearchOpen}
+                                className="w-full justify-between font-normal"
+                              >
+                                {selectedRoleId
+                                  ? selectedRoleId === "__no_role__"
+                                    ? "No role"
+                                    : roles.find((r: any) => r.id === selectedRoleId)?.name
+                                  : "Select a role"}
+                                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                              <Command>
+                                <CommandInput placeholder="Search roles..." />
+                                <CommandList>
+                                  <CommandEmpty>No role found.</CommandEmpty>
+                                  <CommandGroup>
+                                    <CommandItem
+                                      value="No role"
+                                      onSelect={() => {
+                                        setSelectedRoleId("__no_role__")
+                                        setRoleSearchOpen(false)
+                                      }}
+                                    >
+                                      <Check
+                                        className={cn(
+                                          "mr-2 h-4 w-4",
+                                          selectedRoleId === "__no_role__" ? "opacity-100" : "opacity-0"
+                                        )}
+                                      />
+                                      No role
+                                    </CommandItem>
+                                    {roles.map((r: any) => (
+                                      <CommandItem
+                                        key={r.id}
+                                        value={r.name}
+                                        onSelect={() => {
+                                          setSelectedRoleId(r.id)
+                                          setRoleSearchOpen(false)
+                                        }}
+                                      >
+                                        <Check
+                                          className={cn(
+                                            "mr-2 h-4 w-4",
+                                            selectedRoleId === r.id ? "opacity-100" : "opacity-0"
+                                          )}
+                                        />
+                                        {r.name}
+                                      </CommandItem>
+                                    ))}
+                                  </CommandGroup>
+                                </CommandList>
+                              </Command>
+                            </PopoverContent>
+                          </Popover>
+                          <input type="hidden" name="role_id" value={selectedRoleId} />
                           <p className="text-xs text-muted-foreground mt-1">
                             Role determines permissions. You can also use "Assign Role" for detailed permission sync.
                           </p>

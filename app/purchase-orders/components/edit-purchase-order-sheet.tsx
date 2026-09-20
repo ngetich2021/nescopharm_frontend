@@ -7,13 +7,15 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Loader2, Edit, Plus, Package, Building2, Calendar, Store, MessageSquare, Trash2 } from "lucide-react"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { Loader2, Edit, Plus, Package, Building2, Calendar, Store, MessageSquare, Trash2, Check, ChevronsUpDown } from "lucide-react"
 import { updatePurchaseOrder, PurchaseOrder, PurchaseOrderItem, UpdatePurchaseOrderPayload } from "@/lib/purchaseorders"
 import { useToast } from "@/hooks/use-toast"
 import { getSuppliers, Supplier } from "@/lib/suppliers"
 import { getStores, Store as StoreType } from "@/lib/stores"
 import { getProducts, Product as ProductType } from "@/lib/products"
-import { formatCurrency } from "@/lib/utils"
+import { formatCurrency, cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 
 interface ProductWithVariants extends ProductType {
@@ -53,9 +55,9 @@ export function EditPurchaseOrderSheet({ open, onOpenChange, order, onPurchaseOr
   const [products, setProducts] = useState<ProductWithVariants[]>([])
   const [storeId, setStoreId] = useState("")
   const [comments, setComments] = useState("")
-  const [supplierSearch, setSupplierSearch] = useState("")
-  const [storeSearch, setStoreSearch] = useState("")
-  const [productSearch, setProductSearch] = useState("")
+  const [supplierSearchOpen, setSupplierSearchOpen] = useState(false)
+  const [storeSearchOpen, setStoreSearchOpen] = useState(false)
+  const [productSearchOpen, setProductSearchOpen] = useState(false)
   const [loadingSuppliers, setLoadingSuppliers] = useState(false)
   const [loadingProducts, setLoadingProducts] = useState(false)
   const [variantOptions, setVariantOptions] = useState<any[]>([])
@@ -253,33 +255,55 @@ export function EditPurchaseOrderSheet({ open, onOpenChange, order, onPurchaseOr
                   {/* Supplier */}
                   <div className="space-y-2">
                     <Label className="text-sm font-medium">Supplier *</Label>
-                    <Select
-                      value={formData.supplier_id}
-                      onValueChange={(value) => handleInputChange("supplier_id", value)}
-                      onOpenChange={() => setSupplierSearch("")}
-                    >
-                      <SelectTrigger className="h-10">
-                        <SelectValue placeholder="Select a supplier" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <div className="px-2 py-2">
-                          <Input
-                            placeholder="Search suppliers..."
-                            value={supplierSearch}
-                            onChange={e => setSupplierSearch(e.target.value)}
-                            autoFocus
-                            className="h-9"
-                          />
-                        </div>
-                        {loadingSuppliers ? (
-                          <SelectItem value="loading" disabled>Loading...</SelectItem>
-                        ) : suppliers.filter(s => s.name?.toLowerCase().includes(supplierSearch.toLowerCase())).map(supplier => (
-                          <SelectItem key={supplier.id} value={supplier.id}>
-                            {supplier.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Popover open={supplierSearchOpen} onOpenChange={setSupplierSearchOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={supplierSearchOpen}
+                          className="w-full h-10 justify-between font-normal"
+                        >
+                          {formData.supplier_id
+                            ? suppliers.find((supplier) => supplier.id === formData.supplier_id)?.name
+                            : "Select a supplier"}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                        <Command>
+                          <CommandInput placeholder="Search suppliers..." />
+                          <CommandList>
+                            {loadingSuppliers ? (
+                              <div className="px-3 py-2 text-sm text-muted-foreground">Loading...</div>
+                            ) : (
+                              <>
+                                <CommandEmpty>No suppliers found.</CommandEmpty>
+                                <CommandGroup>
+                                  {suppliers.map((supplier) => (
+                                    <CommandItem
+                                      key={supplier.id}
+                                      value={supplier.name}
+                                      onSelect={() => {
+                                        handleInputChange("supplier_id", supplier.id)
+                                        setSupplierSearchOpen(false)
+                                      }}
+                                    >
+                                      <Check
+                                        className={cn(
+                                          "mr-2 h-4 w-4",
+                                          formData.supplier_id === supplier.id ? "opacity-100" : "opacity-0"
+                                        )}
+                                      />
+                                      {supplier.name}
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </>
+                            )}
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                   </div>
 
                   <div className="space-y-2">
@@ -315,27 +339,49 @@ export function EditPurchaseOrderSheet({ open, onOpenChange, order, onPurchaseOr
                       <Store className="h-3.5 w-3.5 text-muted-foreground" />
                       Destination Store
                     </Label>
-                    <Select value={storeId} onValueChange={setStoreId} onOpenChange={() => setStoreSearch("")}>
-                      <SelectTrigger className="h-10">
-                        <SelectValue placeholder="Select a store" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <div className="px-2 py-2">
-                          <Input
-                            placeholder="Search stores..."
-                            value={storeSearch}
-                            onChange={e => setStoreSearch(e.target.value)}
-                            autoFocus
-                            className="h-9"
-                          />
-                        </div>
-                        {stores.filter(s => s.name?.toLowerCase().includes(storeSearch.toLowerCase())).map(store => (
-                          <SelectItem key={store.id} value={store.id}>
-                            {store.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Popover open={storeSearchOpen} onOpenChange={setStoreSearchOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={storeSearchOpen}
+                          className="w-full h-10 justify-between font-normal"
+                        >
+                          {storeId
+                            ? stores.find((store) => store.id === storeId)?.name
+                            : "Select a store"}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                        <Command>
+                          <CommandInput placeholder="Search stores..." />
+                          <CommandList>
+                            <CommandEmpty>No stores found.</CommandEmpty>
+                            <CommandGroup>
+                              {stores.map((store) => (
+                                <CommandItem
+                                  key={store.id}
+                                  value={store.name}
+                                  onSelect={() => {
+                                    setStoreId(store.id)
+                                    setStoreSearchOpen(false)
+                                  }}
+                                >
+                                  <Check
+                                    className={cn(
+                                      "mr-2 h-4 w-4",
+                                      storeId === store.id ? "opacity-100" : "opacity-0"
+                                    )}
+                                  />
+                                  {store.name}
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                   </div>
 
                   <div className="col-span-2 space-y-2">
@@ -374,29 +420,55 @@ export function EditPurchaseOrderSheet({ open, onOpenChange, order, onPurchaseOr
                 <div className="grid grid-cols-12 gap-3 items-end p-4 bg-muted/30 rounded-lg border border-dashed">
                   <div className="col-span-5">
                     <Label className="text-sm font-medium">Product *</Label>
-                    <Select value={newItem.product_id} onValueChange={handleProductSelect} onOpenChange={() => setProductSearch("")}>
-                      <SelectTrigger className="h-10 mt-1.5">
-                        <SelectValue placeholder="Select a product" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <div className="px-2 py-2">
-                          <Input
-                            placeholder="Search products..."
-                            value={productSearch}
-                            onChange={e => setProductSearch(e.target.value)}
-                            autoFocus
-                            className="h-9"
-                          />
-                        </div>
-                        {loadingProducts ? (
-                          <SelectItem value="loading" disabled>Loading...</SelectItem>
-                        ) : products.filter(p => p.name?.toLowerCase().includes(productSearch.toLowerCase())).map(product => (
-                          <SelectItem key={product.id} value={product.id}>
-                            {product.name} {product.sku ? `(${product.sku})` : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Popover open={productSearchOpen} onOpenChange={setProductSearchOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={productSearchOpen}
+                          className="w-full h-10 mt-1.5 justify-between font-normal"
+                        >
+                          {newItem.product_id
+                            ? products.find((product) => product.id === newItem.product_id)?.name
+                            : "Select a product"}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                        <Command>
+                          <CommandInput placeholder="Search products..." />
+                          <CommandList>
+                            {loadingProducts ? (
+                              <div className="px-3 py-2 text-sm text-muted-foreground">Loading...</div>
+                            ) : (
+                              <>
+                                <CommandEmpty>No products found.</CommandEmpty>
+                                <CommandGroup>
+                                  {products.map((product) => (
+                                    <CommandItem
+                                      key={product.id}
+                                      value={`${product.name} ${product.sku || ""}`}
+                                      onSelect={() => {
+                                        handleProductSelect(product.id)
+                                        setProductSearchOpen(false)
+                                      }}
+                                    >
+                                      <Check
+                                        className={cn(
+                                          "mr-2 h-4 w-4",
+                                          newItem.product_id === product.id ? "opacity-100" : "opacity-0"
+                                        )}
+                                      />
+                                      {product.name} {product.sku ? `(${product.sku})` : ""}
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </>
+                            )}
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                   </div>
 
                   {variantOptions.length > 0 && (

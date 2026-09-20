@@ -6,7 +6,7 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Loader2, PlusCircle, Edit, Trash2, Shield } from "lucide-react"
+import { Loader2, PlusCircle, Edit, Trash2, Shield, Check, ChevronsUpDown } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { fetchUsers, createUser, updateUser, deleteUser } from "../actions"
 import {
@@ -20,7 +20,9 @@ import {
 } from "@/components/ui/sheet" // Import Sheet components
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { cn } from "@/lib/utils"
 import { Switch } from "@/components/ui/switch"
 import type { PermissionKey } from "@/types/rbac"
 import type { Role, Permissions } from "@/app/types"
@@ -50,6 +52,8 @@ export function UsersTable() {
   const [saving, setSaving] = useState(false)
   const [selectedUserForPermissions, setSelectedUserForPermissions] = useState<UserData | null>(null)
   const [isPermissionsSheetOpen, setIsPermissionsSheetOpen] = useState(false)
+  const [selectedRoleId, setSelectedRoleId] = useState("")
+  const [roleSearchOpen, setRoleSearchOpen] = useState(false)
   const { toast } = useToast()
   const { userProfile } = useAuth()
   const { hasPermission } = usePermissions()
@@ -253,11 +257,13 @@ export function UsersTable() {
 
   const openCreateModal = () => {
     setEditingUser(null)
+    setSelectedRoleId("")
     setIsModalOpen(true)
   }
 
   const openEditModal = (user: UserData) => {
     setEditingUser(user)
+    setSelectedRoleId(user.role?.id || "")
     setIsModalOpen(true)
   }
 
@@ -366,18 +372,50 @@ export function UsersTable() {
                     <Label htmlFor="role_id" className="text-right">
                       Role
                     </Label>
-                    <Select name="role_id" defaultValue={editingUser?.role?.id || ""} required>
-                      <SelectTrigger className="col-span-3">
-                        <SelectValue placeholder="Select a role" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {roles.map((role) => (
-                          <SelectItem key={role.id} value={role.id}>
-                            {role.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Popover open={roleSearchOpen} onOpenChange={setRoleSearchOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={roleSearchOpen}
+                          className="col-span-3 w-full justify-between font-normal"
+                        >
+                          {selectedRoleId
+                            ? roles.find((role) => role.id === selectedRoleId)?.name
+                            : "Select a role"}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                        <Command>
+                          <CommandInput placeholder="Search roles..." />
+                          <CommandList>
+                            <CommandEmpty>No role found.</CommandEmpty>
+                            <CommandGroup>
+                              {roles.map((role) => (
+                                <CommandItem
+                                  key={role.id}
+                                  value={role.name}
+                                  onSelect={() => {
+                                    setSelectedRoleId(role.id)
+                                    setRoleSearchOpen(false)
+                                  }}
+                                >
+                                  <Check
+                                    className={cn(
+                                      "mr-2 h-4 w-4",
+                                      selectedRoleId === role.id ? "opacity-100" : "opacity-0"
+                                    )}
+                                  />
+                                  {role.name}
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                    <input type="hidden" name="role_id" value={selectedRoleId} required />
                   </div>
                   <div className="grid grid-cols-4 items-center gap-4">
                     <Label htmlFor="is_active" className="text-right">

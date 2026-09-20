@@ -22,6 +22,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { getProducts, type Product } from "@/lib/products";
@@ -45,9 +47,11 @@ import {
   Search,
   PlusCircle,
   Save,
-  Loader2
+  Loader2,
+  Check,
+  ChevronsUpDown
 } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, cn } from "@/lib/utils";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -140,7 +144,12 @@ export function EditProductReceiptModal({
   // Product search and selection
   const [productSearchQuery, setProductSearchQuery] = useState("");
   const [showProductDropdown, setShowProductDropdown] = useState(false);
-  
+
+  // Combobox open state
+  const [storeSearchOpen, setStoreSearchOpen] = useState(false);
+  const [supplierSearchOpen, setSupplierSearchOpen] = useState(false);
+  const [productRowSearchOpen, setProductRowSearchOpen] = useState<Record<string, boolean>>({});
+
   // Variant selection
   const [selectedProductForVariant, setSelectedProductForVariant] = useState<Product | null>(null);
   const [showVariantModal, setShowVariantModal] = useState(false);
@@ -580,18 +589,43 @@ export function EditProductReceiptModal({
 
                   <div className="space-y-2">
                     <Label htmlFor="store">Store *</Label>
-                    <Select value={storeId} onValueChange={setStoreId} disabled={isSubmitting || loadingStores}>
-                      <SelectTrigger>
-                        <SelectValue placeholder={loadingStores ? "Loading stores..." : "Select store"} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {stores.map((store) => (
-                          <SelectItem key={store.id} value={store.id}>
-                            {store.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Popover open={storeSearchOpen} onOpenChange={setStoreSearchOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={storeSearchOpen}
+                          className="w-full justify-between font-normal"
+                          disabled={isSubmitting || loadingStores}
+                        >
+                          {storeId ? stores.find((store) => store.id === storeId)?.name : (loadingStores ? "Loading stores..." : "Select store")}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                        <Command>
+                          <CommandInput placeholder="Search stores..." />
+                          <CommandList>
+                            <CommandEmpty>No store found.</CommandEmpty>
+                            <CommandGroup>
+                              {stores.map((store) => (
+                                <CommandItem
+                                  key={store.id}
+                                  value={store.name}
+                                  onSelect={() => {
+                                    setStoreId(store.id);
+                                    setStoreSearchOpen(false);
+                                  }}
+                                >
+                                  <Check className={cn("mr-2 h-4 w-4", storeId === store.id ? "opacity-100" : "opacity-0")} />
+                                  {store.name}
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                   </div>
 
                   <div className="space-y-2">
@@ -641,19 +675,53 @@ export function EditProductReceiptModal({
                   <CardContent className="space-y-4">
                     <div className="space-y-2">
                       <Label htmlFor="supplier">Supplier</Label>
-                      <Select value={supplierId || "none"} onValueChange={(value) => setSupplierId(value === "none" ? "" : value)} disabled={isSubmitting || loadingSuppliers}>
-                        <SelectTrigger>
-                          <SelectValue placeholder={loadingSuppliers ? "Loading suppliers..." : "Select supplier"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">No supplier</SelectItem>
-                          {suppliers.map((supplier) => (
-                            <SelectItem key={supplier.id} value={supplier.id}>
-                              {supplier.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <Popover open={supplierSearchOpen} onOpenChange={setSupplierSearchOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={supplierSearchOpen}
+                            className="w-full justify-between font-normal"
+                            disabled={isSubmitting || loadingSuppliers}
+                          >
+                            {supplierId ? suppliers.find((supplier) => supplier.id === supplierId)?.name : (loadingSuppliers ? "Loading suppliers..." : "Select supplier")}
+                            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                          <Command>
+                            <CommandInput placeholder="Search suppliers..." />
+                            <CommandList>
+                              <CommandEmpty>No supplier found.</CommandEmpty>
+                              <CommandGroup>
+                                <CommandItem
+                                  value="No supplier"
+                                  onSelect={() => {
+                                    setSupplierId("");
+                                    setSupplierSearchOpen(false);
+                                  }}
+                                >
+                                  <Check className={cn("mr-2 h-4 w-4", !supplierId ? "opacity-100" : "opacity-0")} />
+                                  No supplier
+                                </CommandItem>
+                                {suppliers.map((supplier) => (
+                                  <CommandItem
+                                    key={supplier.id}
+                                    value={supplier.name}
+                                    onSelect={() => {
+                                      setSupplierId(supplier.id);
+                                      setSupplierSearchOpen(false);
+                                    }}
+                                  >
+                                    <Check className={cn("mr-2 h-4 w-4", supplierId === supplier.id ? "opacity-100" : "opacity-0")} />
+                                    {supplier.name}
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
                     </div>
                   </CardContent>
                 </Card>
@@ -854,37 +922,62 @@ export function EditProductReceiptModal({
                               <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
                                 <div className="space-y-2 md:col-span-2">
                                   <Label className="text-sm font-medium">Product *</Label>
-                                  <Select
-                                    value={item.product_id || "select-product"}
-                                    onValueChange={(value) => updateItem(item.id, "product_id", value)}
-                                    disabled={isSubmitting}
+                                  <Popover
+                                    open={productRowSearchOpen[item.id] || false}
+                                    onOpenChange={(open) => setProductRowSearchOpen(prev => ({ ...prev, [item.id]: open }))}
                                   >
-                                    <SelectTrigger className="h-10">
-                                      <SelectValue placeholder="Select product" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="select-product" disabled>
-                                        Select product
-                                      </SelectItem>
-                                      {products.map((product) => (
-                                        <SelectItem key={product.id} value={product.id}>
-                                          <div className="flex flex-col">
-                                            <div className="font-medium">{product.name}</div>
-                                            <div className="text-xs text-gray-500">SKU: {product.sku || 'N/A'}</div>
-                                          </div>
-                                        </SelectItem>
-                                      ))}
-                                      <div className="border-t my-1" />
+                                    <PopoverTrigger asChild>
                                       <Button
-                                        type="button"
-                                        variant="ghost"
-                                        className="w-full justify-start text-left text-sm"
-                                        onClick={handleOpenCreateProduct}
+                                        variant="outline"
+                                        role="combobox"
+                                        aria-expanded={productRowSearchOpen[item.id] || false}
+                                        className="w-full justify-between font-normal h-10"
+                                        disabled={isSubmitting}
                                       >
-                                        <PlusCircle className="h-4 w-4 mr-2" /> Create Product
+                                        {item.product_id ? products.find((product) => product.id === item.product_id)?.name : "Select product"}
+                                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                                       </Button>
-                                    </SelectContent>
-                                  </Select>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                                      <Command>
+                                        <CommandInput placeholder="Search products..." />
+                                        <CommandList>
+                                          <CommandEmpty>No product found.</CommandEmpty>
+                                          <CommandGroup>
+                                            {products.map((product) => (
+                                              <CommandItem
+                                                key={product.id}
+                                                value={`${product.name} ${product.sku || ''}`}
+                                                onSelect={() => {
+                                                  updateItem(item.id, "product_id", product.id);
+                                                  setProductRowSearchOpen(prev => ({ ...prev, [item.id]: false }));
+                                                }}
+                                              >
+                                                <Check className={cn("mr-2 h-4 w-4", item.product_id === product.id ? "opacity-100" : "opacity-0")} />
+                                                <div className="flex flex-col">
+                                                  <div className="font-medium">{product.name}</div>
+                                                  <div className="text-xs text-gray-500">SKU: {product.sku || 'N/A'}</div>
+                                                </div>
+                                              </CommandItem>
+                                            ))}
+                                          </CommandGroup>
+                                        </CommandList>
+                                        <div className="border-t my-1">
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            className="w-full justify-start text-left text-sm"
+                                            onClick={() => {
+                                              handleOpenCreateProduct();
+                                              setProductRowSearchOpen(prev => ({ ...prev, [item.id]: false }));
+                                            }}
+                                          >
+                                            <PlusCircle className="h-4 w-4 mr-2" /> Create Product
+                                          </Button>
+                                        </div>
+                                      </Command>
+                                    </PopoverContent>
+                                  </Popover>
                                 </div>
                                 
                                 {/* Variant Selection - Only show if product has variations */}

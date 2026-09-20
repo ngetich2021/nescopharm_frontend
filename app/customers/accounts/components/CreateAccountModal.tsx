@@ -14,17 +14,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2 } from "lucide-react";
+import { Loader2, Check, ChevronsUpDown } from "lucide-react";
 import { useState, useEffect } from "react";
 import { createCustomerAccount, type CreateCustomerAccountPayload } from "@/lib/customer-accounts";
 import { getCustomers, type Customer } from "@/lib/customers";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { cn } from "@/lib/utils";
 
 import { DocumentForm, DocumentData } from "@/app/customers/components/DocumentForm";
 import { uploadDocument } from "@/lib/documents";
@@ -40,6 +36,7 @@ export function CreateAccountModal({ open, onOpenChange, onSuccess }: CreateAcco
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loadingCustomers, setLoadingCustomers] = useState(false);
+  const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
   const [documents, setDocuments] = useState<DocumentData[]>([]);
   
   // Form state
@@ -436,22 +433,50 @@ export function CreateAccountModal({ open, onOpenChange, onSuccess }: CreateAcco
             {/* Customer Selection */}
             <div className="space-y-2">
               <Label htmlFor="customer">Customer *</Label>
-              <Select 
-                value={customerId} 
-                onValueChange={setCustomerId}
-                disabled={isSubmitting || loadingCustomers}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={loadingCustomers ? "Loading customers..." : "Select a customer"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {customers.map((customer) => (
-                    <SelectItem key={customer.id} value={customer.id}>
-                      {customer.business_name || customer.name} {customer.email ? `(${customer.email})` : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Popover open={customerSearchOpen} onOpenChange={setCustomerSearchOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={customerSearchOpen}
+                    className="w-full justify-between font-normal"
+                    disabled={isSubmitting || loadingCustomers}
+                  >
+                    {customerId
+                      ? (() => {
+                          const selectedCustomer = customers.find((customer) => customer.id === customerId);
+                          return selectedCustomer
+                            ? `${selectedCustomer.business_name || selectedCustomer.name}${selectedCustomer.email ? ` (${selectedCustomer.email})` : ''}`
+                            : "Select a customer";
+                        })()
+                      : loadingCustomers ? "Loading customers..." : "Select a customer"}
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                  <Command>
+                    <CommandInput placeholder="Search customers..." />
+                    <CommandList>
+                      <CommandEmpty>No customer found.</CommandEmpty>
+                      <CommandGroup>
+                        {customers.map((customer) => (
+                          <CommandItem
+                            key={customer.id}
+                            value={`${customer.business_name || customer.name} ${customer.email || ''}`}
+                            onSelect={() => {
+                              setCustomerId(customer.id);
+                              setCustomerSearchOpen(false);
+                            }}
+                          >
+                            <Check className={cn("mr-2 h-4 w-4", customerId === customer.id ? "opacity-100" : "opacity-0")} />
+                            {customer.business_name || customer.name} {customer.email ? `(${customer.email})` : ''}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
             </div>
             
             {/* Basic Account Information */}
