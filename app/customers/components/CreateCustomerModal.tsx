@@ -78,7 +78,7 @@ export function CreateCustomerModal({
   
   // Credit account fields (only shown if payment method is credit)
   const [creditRequired, setCreditRequired] = useState("");
-  const [creditPeriodRequired, setCreditPeriodRequired] = useState("");
+  const [creditDays, setCreditDays] = useState("");
   const [certificateOfIncorporationNumber, setCertificateOfIncorporationNumber] = useState("");
   const [companyType, setCompanyType] = useState("");
   const [annualTurnover, setAnnualTurnover] = useState("");
@@ -123,7 +123,7 @@ export function CreateCustomerModal({
     // Remove documents reset
     // Reset credit account fields
     setCreditRequired("");
-    setCreditPeriodRequired("");
+    setCreditDays("");
     setCertificateOfIncorporationNumber("");
     setCompanyType("");
     setAnnualTurnover("");
@@ -391,7 +391,7 @@ export function CreateCustomerModal({
         company_type: companyType || null,
         annual_turnover: annualTurnover ? parseFloat(annualTurnover) : null,
         credit_required: creditRequired ? parseFloat(creditRequired) : null,
-        credit_period_required: creditPeriodRequired || null,
+        credit_days: creditDays ? parseInt(creditDays, 10) : null,
         currently_defaulted: currentlyDefaulted,
         credit_terms: creditTerms || null,
         notes: null, // Add notes field as expected by API
@@ -823,14 +823,19 @@ export function CreateCustomerModal({
                     </div>
                     
                     <div className="space-y-2">
-                      <Label htmlFor="creditPeriodRequired">Credit Period Required</Label>
+                      <Label htmlFor="creditDays">Credit Period (Days)</Label>
                       <Input
-                        id="creditPeriodRequired"
-                        value={creditPeriodRequired}
-                        onChange={(e) => setCreditPeriodRequired(e.target.value)}
-                        placeholder="30 days"
+                        id="creditDays"
+                        type="number"
+                        min="0"
+                        value={creditDays}
+                        onChange={(e) => setCreditDays(e.target.value)}
+                        placeholder="e.g. 60"
                         disabled={isSubmitting || authLoading}
                       />
+                      <p className="text-xs text-muted-foreground">
+                        Used to auto-calculate invoice due dates for this customer.
+                      </p>
                     </div>
                   </div>
                   

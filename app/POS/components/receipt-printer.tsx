@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Textarea } from "@/components/ui/textarea"
 import { Printer, Download, Eye } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { getCustomerDisplayName } from "@/lib/customers"
 
 interface ReceiptPrinterProps {
   order: any
@@ -38,7 +39,7 @@ export function ReceiptPrinter({ order }: ReceiptPrinterProps) {
     receipt += line + "\n"
 
     // Customer
-    receipt += leftRight("Customer:", order.customer?.name || "Walk-in") + "\n"
+    receipt += leftRight("Customer:", order.customer ? getCustomerDisplayName(order.customer) : "Walk-in") + "\n"
     if (order.customer?.email) {
       receipt += leftRight("Email:", order.customer.email) + "\n"
     }

@@ -16,7 +16,7 @@ import { useForm, useFieldArray, type SubmitHandler } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { fetchInvoiceById, updateInvoice, Invoice, CreateInvoiceRequest } from "@/lib/invoices"
-import { getCustomers, createCustomer } from "@/lib/customers"
+import { getCustomers, createCustomer, getCustomerDisplayName } from "@/lib/customers"
 import { getProducts } from "@/lib/products"
 import { useToast } from "@/hooks/use-toast"
 import { formatCurrency } from "@/lib/utils"
@@ -82,9 +82,12 @@ export function EditInvoiceSheet({ open, onClose, invoiceId, onSuccess }: EditIn
   const [isLoading, setIsLoading] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [productSearchTerm, setProductSearchTerm] = useState("")
+  const [productSearchResults, setProductSearchResults] = useState<any[] | null>(null)
+  const [isSearchingProducts, setIsSearchingProducts] = useState(false)
   const [showProductSearch, setShowProductSearch] = useState<number | null>(null)
   const [customerSearchTerm, setCustomerSearchTerm] = useState("")
   const [showCustomerSearch, setShowCustomerSearch] = useState(false)
+  const [paymentType, setPaymentType] = useState<'cash' | 'credit'>('cash')
   const [showCreateCustomer, setShowCreateCustomer] = useState(false)
   const [newCustomerName, setNewCustomerName] = useState("")
   const [newCustomerEmail, setNewCustomerEmail] = useState("")
@@ -139,7 +142,8 @@ export function EditInvoiceSheet({ open, onClose, invoiceId, onSuccess }: EditIn
       setIsLoading(true)
       const invoiceData = await fetchInvoiceById(invoiceId)
       setInvoice(invoiceData)
-      
+      setPaymentType(invoiceData.payment_type === 'credit' ? 'credit' : 'cash')
+
       // Check if invoice can be edited (only draft invoices)
       if (invoiceData.status !== 'draft') {
         toast({
@@ -212,7 +216,7 @@ export function EditInvoiceSheet({ open, onClose, invoiceId, onSuccess }: EditIn
 
   const loadProducts = async () => {
     try {
-      const productsData = await getProducts()
+      const productsData = await getProducts(1, 200)
       setProducts(productsData?.data || [])
     } catch (error: any) {
       // Silently handle product loading errors
@@ -225,11 +229,38 @@ export function EditInvoiceSheet({ open, onClose, invoiceId, onSuccess }: EditIn
     customer.phone?.toLowerCase().includes(customerSearchTerm.toLowerCase())
   )
 
-  const filteredProducts = products.filter(product =>
-    product.name?.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
-    product.sku?.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
-    product.description?.toLowerCase().includes(productSearchTerm.toLowerCase())
-  )
+  // Search products server-side once the query is long enough, so results aren't
+  // limited to whatever happened to load in the initial page of products.
+  useEffect(() => {
+    if (!open) return
+    const term = productSearchTerm.trim()
+    if (term.length < 2) {
+      setProductSearchResults(null)
+      return
+    }
+    setIsSearchingProducts(true)
+    const timer = setTimeout(async () => {
+      try {
+        const { data } = await getProducts(1, 50, { search: term })
+        setProductSearchResults(data || [])
+      } catch (error) {
+        console.error('Product search failed:', error)
+        setProductSearchResults([])
+      } finally {
+        setIsSearchingProducts(false)
+      }
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [productSearchTerm, open])
+
+  // Below the search threshold, fall back to filtering the initially loaded page.
+  const filteredProducts = productSearchResults !== null
+    ? productSearchResults
+    : products.filter(product =>
+        product.name?.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
+        product.sku?.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
+        product.description?.toLowerCase().includes(productSearchTerm.toLowerCase())
+      )
 
   const addLineItem = () => {
     append({
@@ -377,6 +408,7 @@ export function EditInvoiceSheet({ open, onClose, invoiceId, onSuccess }: EditIn
         due_date: data.due_date,
         currency: data.currency,
         payment_terms: data.payment_terms,
+        payment_type: paymentType,
         notes: data.notes,
         terms_and_conditions: data.terms_and_conditions,
         line_items: data.line_items.map(item => {
@@ -521,8 +553,11 @@ export function EditInvoiceSheet({ open, onClose, invoiceId, onSuccess }: EditIn
                               aria-expanded={showCustomerSearch}
                               className="w-full justify-between"
                             >
-                              {form.watch('customer_id') 
-                                ? customers.find(customer => customer.id === form.watch('customer_id'))?.name
+                              {form.watch('customer_id')
+                                ? (() => {
+                                    const selected = customers.find(customer => customer.id === form.watch('customer_id'))
+                                    return selected ? getCustomerDisplayName(selected) : "Select or search customer"
+                                  })()
                                 : "Select or search customer"}
                               <Search className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                             </Button>
@@ -564,7 +599,7 @@ export function EditInvoiceSheet({ open, onClose, invoiceId, onSuccess }: EditIn
                                         setCustomerSearchTerm("")
                                       }}
                                     >
-                                      <span className="font-medium text-sm">{customer.name}</span>
+                                      <span className="font-medium text-sm">{getCustomerDisplayName(customer)}</span>
                                       <div className="text-xs text-gray-500">
                                         {customer.email && <div>{customer.email}</div>}
                                         {customer.phone && <div>{customer.phone}</div>}
@@ -668,6 +703,34 @@ export function EditInvoiceSheet({ open, onClose, invoiceId, onSuccess }: EditIn
                           <SelectItem value="Custom">Custom</SelectItem>
                         </SelectContent>
                       </Select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Payment Type</Label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setPaymentType('cash')}
+                        className={`flex items-center justify-center gap-2 rounded-md border p-2 text-sm font-medium transition-colors ${
+                          paymentType === 'cash'
+                            ? 'border-primary bg-primary/10 text-primary'
+                            : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        Cash
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPaymentType('credit')}
+                        className={`flex items-center justify-center gap-2 rounded-md border p-2 text-sm font-medium transition-colors ${
+                          paymentType === 'credit'
+                            ? 'border-primary bg-primary/10 text-primary'
+                            : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        Credit
+                      </button>
                     </div>
                   </div>
 
@@ -796,7 +859,9 @@ export function EditInvoiceSheet({ open, onClose, invoiceId, onSuccess }: EditIn
                                   </Button>
                                 </div>
                                 <div className="max-h-60 overflow-y-auto">
-                                  {filteredProducts.length === 0 ? (
+                                  {isSearchingProducts ? (
+                                    <div className="p-3 text-sm text-gray-500 text-center">Searching...</div>
+                                  ) : filteredProducts.length === 0 ? (
                                     <div className="p-3 text-sm text-gray-500 text-center">
                                       {productSearchTerm ? 'No products found' : 'No products available'}
                                     </div>

@@ -64,12 +64,32 @@ export interface Role {
 
 // ==================== USER MANAGEMENT ====================
 
+export interface FetchUsersFilters {
+  role_scope?: "warehouse_incharge" | string
+  is_active?: boolean
+  email?: string
+  first_name?: string
+  last_name?: string
+  company_id?: string
+  include_deleted?: boolean
+  only_deleted?: boolean
+}
+
 /**
- * Fetch all users
+ * Fetch all users, optionally filtered by query params (e.g. role_scope to
+ * restrict to users whose role is flagged for a particular purpose, such as
+ * "warehouse_incharge").
  */
-export async function fetchUsers(): Promise<UserData[]> {
+export async function fetchUsers(filters: FetchUsersFilters = {}): Promise<UserData[]> {
   try {
-    const response: any = await apiCall<any>("/users", "GET")
+    const queryParams = new URLSearchParams()
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== "") {
+        queryParams.append(key, String(value))
+      }
+    })
+    const queryString = queryParams.toString() ? `?${queryParams.toString()}` : ""
+    const response: any = await apiCall<any>(`/users${queryString}`, "GET")
     return response.users || []
   } catch (error: any) {
     throw new Error(`Failed to fetch users: ${error.message || "Unknown error"}`)
@@ -77,10 +97,10 @@ export async function fetchUsers(): Promise<UserData[]> {
 }
 
 /**
- * Get all users (alias for fetchUsers)
+ * Get all users (alias for fetchUsers), optionally filtered by query params.
  */
-export async function getUsers(): Promise<UserData[]> {
-  return fetchUsers();
+export async function getUsers(filters: FetchUsersFilters = {}): Promise<UserData[]> {
+  return fetchUsers(filters);
 }
 
 /**

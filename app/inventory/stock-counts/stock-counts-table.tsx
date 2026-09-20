@@ -26,6 +26,7 @@ import {
 import { FileSpreadsheet } from "lucide-react"
 import type { StockCount } from "@/app/types"
 import { format } from "date-fns"
+import { PermissionGuard } from "@/components/PermissionGuard"
 import { CreateStockCountSheet } from "./components/create-stock-count-sheet"
 import { deleteStockCount, updateStockCountStatus } from "@/lib/stock-counts"
 
@@ -423,15 +424,17 @@ export function StockCountsTable({
         </div>
         
         <div className="flex gap-2 w-full sm:w-auto">
-          <Button 
-            onClick={() => setIsCreateStockCountSheetOpen(true)}
-            variant="outline"
-            size="sm"
-            className="border-[#1E2764] text-[#1E2764] hover:bg-[#1E2764]/10"
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            New Count
-          </Button>
+          <PermissionGuard permissions={["can_create_stock_counts", "can_manage_system", "can_manage_company"]} hideOnDenied>
+            <Button
+              onClick={() => setIsCreateStockCountSheetOpen(true)}
+              variant="outline"
+              size="sm"
+              className="border-[#1E2764] text-[#1E2764] hover:bg-[#1E2764]/10"
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              New Count
+            </Button>
+          </PermissionGuard>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm">

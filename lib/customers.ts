@@ -97,6 +97,23 @@ export interface Customer {
   account_id?: string | null
 }
 
+// Company customers store the CONTACT PERSON's name in `name` (see
+// CreateCustomerModal.tsx, which labels that input "Contact Person Name *"
+// when customer_type === "company"). `business_name` holds the actual
+// business/company name. Any picker, dropdown, table, or list that displays
+// "the customer" should use this helper instead of reading `.name` directly,
+// so company customers show their business name rather than their contact
+// person's name. Places that intentionally show the contact person (e.g. a
+// dedicated "Contact Person" field/column) should keep using `.name`.
+export function getCustomerDisplayName(
+  customer: { name: string; business_name?: string | null; customer_type?: string | null },
+): string {
+  if (customer.customer_type === "company" && customer.business_name?.trim()) {
+    return customer.business_name.trim()
+  }
+  return customer.name
+}
+
 // Interface for the detailed customer profile response
 export interface CustomerProfileData extends Omit<Customer, 'notes'> {
   notes: CustomerNote[] | string | null // Can be array of notes, string, or null
@@ -384,4 +401,54 @@ export async function deleteCustomer(id: string): Promise<boolean> {
     }
     throw new Error(`Failed to delete customer: ${error.message || "Unknown error"}`)
   }
+}
+
+export interface CustomerCreditTerms {
+  payment_method: string
+  credit_required: string | number | null
+  credit_used: string | number | null
+  available_credit: string | number | null
+  credit_days: number | null
+  credit_terms: string | null
+  has_pending_change: boolean
+  customer_account_id: string | null
+}
+
+export async function fetchCustomerCreditTerms(customerId: string): Promise<CustomerCreditTerms> {
+  const response = await apiCall<{ status: string; data: CustomerCreditTerms }>(
+    `/customers/${customerId}/credit-terms`,
+    "GET",
+    undefined,
+    true
+  )
+  return response.data
+}
+
+export interface CreditTermsChange {
+  id: string
+  customer_account_id: string
+  approval_type: string
+  status: 'pending' | 'approved' | 'rejected'
+  previous_credit_limit: string | number | null
+  new_credit_limit: string | number | null
+  previous_credit_days: number | null
+  new_credit_days: number | null
+  notes: string | null
+  approved_at: string | null
+  created_at: string
+  approver: { id: string; first_name: string; last_name: string; email: string } | null
+  created_by: { id: string; first_name: string; last_name: string; email: string } | null
+}
+
+// History of GM approvals/rejections that changed (or proposed changing) this
+// customer's credit limit/terms over time - who requested it, who approved it,
+// and what the terms were before and after.
+export async function fetchCustomerCreditTermsHistory(customerAccountId: string): Promise<CreditTermsChange[]> {
+  const response = await apiCall<{ status: string; data: CreditTermsChange[] }>(
+    `/customer-accounts/${customerAccountId}/approvals?approval_type=credit_limit_update`,
+    "GET",
+    undefined,
+    true
+  )
+  return response.data
 }

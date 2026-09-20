@@ -17,6 +17,7 @@ import {
 import { cn, toSentenceCase } from "@/lib/utils";
 import { format } from "date-fns";
 import { OrderDispatch } from "@/lib/order-dispatches";
+import { getCustomerDisplayName } from "@/lib/customers";
 
 interface DispatchTableProps {
   dispatches: OrderDispatch[];
@@ -113,7 +114,7 @@ export function DispatchTable({
                     <TableCell>
                        <div className="flex flex-col">
                         <span className="font-medium text-sm">{dispatch.order?.order_number}</span>
-                        <span className="text-xs text-muted-foreground">{dispatch.order?.customer?.name}</span>
+                        <span className="text-xs text-muted-foreground">{dispatch.order?.customer ? getCustomerDisplayName(dispatch.order.customer) : ""}</span>
                        </div>
                     </TableCell>
                     <TableCell>

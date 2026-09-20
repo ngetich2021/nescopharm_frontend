@@ -60,6 +60,8 @@ export function CreatePurchaseOrderSheet({ open, onOpenChange, onPurchaseOrderCr
   const [storeId, setStoreId] = useState("")
   const [storeSearch, setStoreSearch] = useState("")
   const [comments, setComments] = useState("")
+  const [shippingCost, setShippingCost] = useState("")
+  const [logisticsCost, setLogisticsCost] = useState("")
   const [variantOptions, setVariantOptions] = useState<any[]>([])
   const [selectedProduct, setSelectedProduct] = useState<any>(null)
   const [showVariantModal, setShowVariantModal] = useState(false)
@@ -136,6 +138,8 @@ export function CreatePurchaseOrderSheet({ open, onOpenChange, onPurchaseOrderCr
         delivery_date: formData.delivery_date,
         store_id: storeId || "",
         comments,
+        shipping_cost: shippingCost ? parseFloat(shippingCost) : 0,
+        logistics_cost: logisticsCost ? parseFloat(logisticsCost) : 0,
         items: formData.items.map(item => ({
           product_id: item.product_id,
           variant_id: item.variant_id || null,
@@ -173,6 +177,8 @@ export function CreatePurchaseOrderSheet({ open, onOpenChange, onPurchaseOrderCr
       items: [],
     })
     setComments("")
+    setShippingCost("")
+    setLogisticsCost("")
     setStoreId("")
     setNewItem({
       product_id: "",
@@ -504,6 +510,32 @@ export function CreatePurchaseOrderSheet({ open, onOpenChange, onPurchaseOrderCr
                         )}
                       </SelectContent>
                     </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="shippingCost" className="text-sm font-medium">Shipping Cost (estimate)</Label>
+                    <Input
+                      id="shippingCost"
+                      type="number"
+                      step="0.01"
+                      value={shippingCost}
+                      onChange={e => setShippingCost(e.target.value)}
+                      placeholder="0.00"
+                      className="h-10"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="logisticsCost" className="text-sm font-medium">Logistics Cost (estimate)</Label>
+                    <Input
+                      id="logisticsCost"
+                      type="number"
+                      step="0.01"
+                      value={logisticsCost}
+                      onChange={e => setLogisticsCost(e.target.value)}
+                      placeholder="0.00"
+                      className="h-10"
+                    />
                   </div>
 
                   <div className="col-span-2 space-y-2">

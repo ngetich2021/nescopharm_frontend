@@ -290,10 +290,16 @@ export function QuotesTable({
                   onClick={() => onViewQuote(quote.id)}
                 >
                   <TableCell className="font-medium">
-                    <div className="flex flex-col">
+                    <div className="flex flex-col gap-1">
                       <span className="text-sm font-semibold text-primary">
                         {formatQuoteNumber(quote)}
                       </span>
+                      {quote.submitted_by_id && (
+                        <Badge variant="outline" className="w-fit bg-blue-50 text-blue-800 border-blue-400 text-[11px] font-normal">
+                          From: {quote.submittedBy?.name || "Rep"} · {new Date(quote.submitted_at || quote.created_at).toLocaleDateString()}{" "}
+                          {new Date(quote.submitted_at || quote.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · Needs Review
+                        </Badge>
+                      )}
                     </div>
                   </TableCell>
                   <TableCell>

@@ -145,6 +145,8 @@ export interface ProductReceiptDetails {
   received_by: string;
   store_id: string;
   document_url?: string | null;
+  shipping_cost?: number | string | null;
+  logistics_cost?: number | string | null;
   created_at: string;
   updated_at: string;
   items_count: number;
@@ -170,6 +172,8 @@ export interface ProductReceipt {
   store_id: string;
   document_url?: string | null;
   document_path?: string | null;
+  shipping_cost?: number | string | null;
+  logistics_cost?: number | string | null;
   created_at: string;
   updated_at: string;
   items_count?: number;
@@ -199,6 +203,10 @@ export async function createProductReceipt(payload: {
   document_type: string;
   reference_number: string;
   store_id: string;
+  // Total shipping/logistics cost for this whole shipment - distributed across
+  // the received items to update each product's landed-cost basis.
+  shipping_cost?: number;
+  logistics_cost?: number;
   items: Array<{
     product_id: string;
     variant_id?: string | null;
@@ -228,13 +236,15 @@ export async function createProductReceipt(payload: {
       formData.append('document_type', payload.document_type);
       formData.append('reference_number', payload.reference_number);
       formData.append('store_id', payload.store_id);
-      
+      if (payload.shipping_cost !== undefined) formData.append('shipping_cost', String(payload.shipping_cost));
+      if (payload.logistics_cost !== undefined) formData.append('logistics_cost', String(payload.logistics_cost));
+
       // Add items array
       formData.append('items', JSON.stringify(payload.items));
-      
+
       // Add document file
       formData.append('document', payload.document);
-      
+
       requestData = formData;
     } else {
       // Regular JSON payload
@@ -244,6 +254,8 @@ export async function createProductReceipt(payload: {
         document_type: payload.document_type,
         reference_number: payload.reference_number,
         store_id: payload.store_id,
+        shipping_cost: payload.shipping_cost,
+        logistics_cost: payload.logistics_cost,
         items: payload.items
       };
     }
@@ -280,6 +292,7 @@ export interface ProductReceiptApiResponse {
   supplier_name?: string | null;
   contractor_name?: string | null;
   recipient_name: string;
+  pricing_warnings?: string[];
 }
 
 // New interface for API product receipt summary response
@@ -347,6 +360,8 @@ export async function updateProductReceiptFull(id: string, payload: {
   document_type: string;
   reference_number: string;
   store_id: string;
+  shipping_cost?: number;
+  logistics_cost?: number;
   items: Array<{
     product_id: string;
     variant_id?: string | null;
@@ -376,13 +391,15 @@ export async function updateProductReceiptFull(id: string, payload: {
       formData.append('document_type', payload.document_type);
       formData.append('reference_number', payload.reference_number);
       formData.append('store_id', payload.store_id);
-      
+      if (payload.shipping_cost !== undefined) formData.append('shipping_cost', String(payload.shipping_cost));
+      if (payload.logistics_cost !== undefined) formData.append('logistics_cost', String(payload.logistics_cost));
+
       // Add items array
       formData.append('items', JSON.stringify(payload.items));
-      
+
       // Add document file
       formData.append('document', payload.document);
-      
+
       requestData = formData;
     } else {
       // Regular JSON payload
@@ -392,6 +409,8 @@ export async function updateProductReceiptFull(id: string, payload: {
         document_type: payload.document_type,
         reference_number: payload.reference_number,
         store_id: payload.store_id,
+        shipping_cost: payload.shipping_cost,
+        logistics_cost: payload.logistics_cost,
         items: payload.items
       };
     }

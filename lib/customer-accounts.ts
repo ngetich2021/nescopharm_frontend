@@ -60,6 +60,7 @@ export interface CustomerAccount {
   annual_turnover?: string | null
   credit_required?: string | null
   credit_period_required?: string | null
+  credit_days?: number | null
   currently_defaulted: boolean
   credit_terms?: string | null
   current_balance?: string | null
@@ -100,6 +101,8 @@ export interface Approval {
   approval_type: string
   previous_credit_limit?: string | null
   new_credit_limit?: string | null
+  previous_credit_days?: number | null
+  new_credit_days?: number | null
   metadata: any[]
   approver?: User
 }
@@ -145,6 +148,7 @@ export interface CreateCustomerAccountPayload {
   annual_turnover?: number | null;
   credit_required?: number | null;
   credit_period_required?: string | null;
+  credit_days?: number | null;
   currently_defaulted: boolean;
   credit_terms?: string | null;
   notes?: string | null;
@@ -329,7 +333,8 @@ export async function approveOrRejectCustomerAccount(
 
 // Credit limit request interfaces
 export interface CreditLimitUpdateRequest {
-  requested_credit_limit: number;
+  requested_credit_limit?: number;
+  requested_credit_days?: number;
   reason: string;
   justification: string;
   supporting_documents?: string[];
@@ -351,6 +356,8 @@ export interface CreditLimitUpdateResponse {
       approval_type: string;
       previous_credit_limit: string;
       new_credit_limit: string;
+      previous_credit_days?: number | null;
+      new_credit_days?: number | null;
       metadata: {
         justification: string;
         supporting_documents: string[];

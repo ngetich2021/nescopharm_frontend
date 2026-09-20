@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { getCustomerDisplayName } from "@/lib/customers";
 import { Loader2, CheckCircle, XCircle } from "lucide-react";
 import { approveOrRejectCustomerAccount, type CustomerAccountWithDetails } from "@/lib/customer-accounts";
 
@@ -102,7 +103,7 @@ export function ApprovalModal({ open, onOpenChange, account, action, onSuccess }
           <div className="space-y-2">
             <p className="text-sm font-medium">Account: {account.account_number}</p>
             <p className="text-sm text-muted-foreground">
-              Customer: {account.customer?.business_name || account.customer?.name || "N/A"}
+              Customer: {account.customer ? getCustomerDisplayName(account.customer) : "N/A"}
             </p>
           </div>
 

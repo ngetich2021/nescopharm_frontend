@@ -5,17 +5,26 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { ArrowLeft, Mail, MoreHorizontal, Phone, Printer, MapPin, ChevronRight, HelpCircle, Truck, FileText, Plus, Eye, Download, CreditCard, History, Edit } from "lucide-react"
+import { ArrowLeft, Mail, MoreHorizontal, Phone, Printer, MapPin, ChevronRight, HelpCircle, Truck, FileText, Plus, Eye, Download, CreditCard, History, Edit, Wallet } from "lucide-react"
+import { CreditOveragePrompt } from "@/components/credit-overage-prompt"
+import { getCreditOverage, coversOverage } from "@/lib/credit-overage"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Input } from "@/components/ui/input"
+import { INSTANT_PAYMENT_METHODS } from "@/lib/payment-methods"
 import { PaymentModal } from "./payment-modal"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { DeliveryLocationModal } from "./delivery-location-modal"
 import { toast } from "@/components/ui/use-toast"
 import { getPayments, createPayment } from "@/lib/payments"
 import { fetchInvoices, fetchInvoiceByOrderId, Invoice, createInvoiceFromOrder } from "@/lib/invoices"
+import { fetchCustomerCreditTerms, CustomerCreditTerms } from "@/lib/customers"
+import { getInvoiceStatusColor, getInvoiceStatusLabel } from "@/lib/invoice-status"
 import { getLogistics, createLogistics, CreateLogisticsData, Logistics as ApiLogistics } from "@/lib/logistics"
 import { fetchOrderById, OrderDetail } from "@/lib/orders"
 import { DeliveryLocation as ApiDeliveryLocation } from "@/lib/delivery-locations"
@@ -105,12 +114,40 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
   const [isEditOrderModalOpen, setIsEditOrderModalOpen] = useState(false)
   const [isCreatingInvoice, setIsCreatingInvoice] = useState(false)
   const [showCompletionDialog, setShowCompletionDialog] = useState(false)
+  const [showPaymentMethodDialog, setShowPaymentMethodDialog] = useState(false)
+  const [invoicePaymentOption, setInvoicePaymentOption] = useState<'instant' | 'credit'>('instant')
+  const [invoicePaymentMethod, setInvoicePaymentMethod] = useState<string>("")
+  const [invoiceTransactionRef, setInvoiceTransactionRef] = useState("")
+  const [invoiceCreditTerms, setInvoiceCreditTerms] = useState<CustomerCreditTerms | null>(null)
+  const [isLoadingInvoiceCreditTerms, setIsLoadingInvoiceCreditTerms] = useState(false)
+  const [invoiceDownPaymentAmount, setInvoiceDownPaymentAmount] = useState(0)
+  const [invoiceDownPaymentMethod, setInvoiceDownPaymentMethod] = useState("")
+  const [invoiceDownPaymentTransactionRef, setInvoiceDownPaymentTransactionRef] = useState("")
   const [deliveryLocations, setDeliveryLocations] = useState<DeliveryLocation[]>([])
   const [deliveryPersons, setDeliveryPersons] = useState<DeliveryPerson[]>([])
   const [isLoadingLocations, setIsLoadingLocations] = useState(false)
   const [orderInvoice, setOrderInvoice] = useState<Invoice | null>(null)
   const [isLoadingInvoice, setIsLoadingInvoice] = useState(true)
   const [isCreateDispatchModalOpen, setIsCreateDispatchModalOpen] = useState(false)
+
+  // Load the customer's credit terms when the payment method dialog opens, so staff
+  // can see what they're eligible for before choosing cash vs. credit.
+  useEffect(() => {
+    setInvoiceDownPaymentAmount(0)
+    setInvoiceDownPaymentMethod("")
+    setInvoiceDownPaymentTransactionRef("")
+    if (!showPaymentMethodDialog || !order.customer_id) {
+      return
+    }
+    setIsLoadingInvoiceCreditTerms(true)
+    fetchCustomerCreditTerms(order.customer_id)
+      .then((terms) => {
+        setInvoiceCreditTerms(terms)
+        setInvoicePaymentOption(terms.payment_method === 'credit' ? 'credit' : 'instant')
+      })
+      .catch(() => setInvoiceCreditTerms(null))
+      .finally(() => setIsLoadingInvoiceCreditTerms(false))
+  }, [showPaymentMethodDialog, order.customer_id])
 
   // Fetch delivery locations when modal opens
   useEffect(() => {
@@ -203,7 +240,12 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
   const logisticsData = order.delivery_details?.[0] || null
   
   const totalPaid = payments.reduce((sum, payment) => sum + parseFloat(payment.amount_paid), 0);
-  
+
+  const orderTotal = parseFloat(order.final_amount || order.total_amount)
+  const invoiceCreditOverage = invoicePaymentOption === 'credit' && invoiceCreditTerms?.credit_days
+    ? getCreditOverage(orderTotal, invoiceCreditTerms.available_credit)
+    : 0
+
   // Function to create invoice directly from current order
   const handleCreateInvoice = async () => {
     // Validate order has required data
@@ -231,12 +273,39 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
       return
     }
 
-    // If order is already completed, proceed with invoice creation
-    await createInvoiceFromCompletedOrder()
+    // Always ask how this invoice is being paid (cash vs. credit) before creating it.
+    setShowPaymentMethodDialog(true)
   }
 
-  // Function to actually create the invoice (extracted for reuse)
+  // Function to actually create the invoice, once cash/credit has been chosen (extracted for reuse)
   const createInvoiceFromCompletedOrder = async () => {
+    if (invoicePaymentOption === 'instant' && !invoicePaymentMethod) {
+      toast({
+        title: "Error",
+        description: "Select how the payment was received (cash, M-Pesa, bank, etc.)",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (invoicePaymentOption === 'credit' && !invoiceCreditTerms?.credit_days) {
+      toast({
+        title: "Error",
+        description: "This customer has no GM-approved credit terms. Get credit terms approved, or switch to instant payment.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (invoiceCreditOverage > 0 && (!coversOverage(invoiceDownPaymentAmount, invoiceCreditOverage) || !invoiceDownPaymentMethod)) {
+      toast({
+        title: "Error",
+        description: `This exceeds available credit by KES ${invoiceCreditOverage.toLocaleString()}. Enter how that amount will be paid now to proceed.`,
+        variant: "destructive",
+      })
+      return
+    }
+
     setIsCreatingInvoice(true)
     try {
       const invoiceData = {
@@ -244,10 +313,16 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
         due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
         payment_terms: 'Net 30',
         notes: order.notes || '',
+        payment_option: invoicePaymentOption,
+        payment_method: invoicePaymentOption === 'instant' ? invoicePaymentMethod : undefined,
+        transaction_id: invoicePaymentOption === 'instant' ? (invoiceTransactionRef || undefined) : undefined,
+        down_payment_amount: invoicePaymentOption === 'credit' && invoiceCreditOverage > 0 ? invoiceDownPaymentAmount : undefined,
+        down_payment_method: invoicePaymentOption === 'credit' && invoiceCreditOverage > 0 ? invoiceDownPaymentMethod : undefined,
+        down_payment_transaction_id: invoicePaymentOption === 'credit' && invoiceCreditOverage > 0 ? (invoiceDownPaymentTransactionRef || undefined) : undefined,
       }
-      
+
       console.log('Creating invoice with data:', { orderId: order.id, invoiceData })
-      
+
       const newInvoice = await createInvoiceFromOrder(order.id, invoiceData)
       
       console.log('Invoice created successfully:', newInvoice)
@@ -266,6 +341,13 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
       
       // Refresh invoice data
       setOrderInvoice(newInvoice)
+      setShowPaymentMethodDialog(false)
+      setInvoicePaymentOption('instant')
+      setInvoicePaymentMethod("")
+      setInvoiceTransactionRef("")
+      setInvoiceDownPaymentAmount(0)
+      setInvoiceDownPaymentMethod("")
+      setInvoiceDownPaymentTransactionRef("")
     } catch (error: any) {
       // Extract the API error message directly
       let errorMessage = "Failed to create invoice from order"
@@ -298,11 +380,11 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
     }
   }
 
-  // Function to handle order completion and invoice creation
+  // Function to handle order completion, then ask how the resulting invoice is paid
   const handleCompleteOrderAndCreateInvoice = async () => {
     setShowCompletionDialog(false)
     setIsCreatingInvoice(true)
-    
+
     try {
       // Update order status to completed
       console.log('Updating order status to completed...')
@@ -312,84 +394,29 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
         { status: 'completed' },
         true
       )
-      
+
       console.log('Order status updated successfully')
-      
+
       toast({
         title: "Order Completed",
         description: "Order status updated to completed.",
       })
-      
+
       // Update local order state
       order.status = 'completed'
-      
-      // Now create the invoice - don't await it, let it handle its own state
-      console.log('Proceeding to create invoice...')
-      
-      const invoiceData = {
-        invoice_date: new Date().toISOString().split('T')[0],
-        due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        payment_terms: 'Net 30',
-        notes: order.notes || '',
-      }
-      
-      console.log('Creating invoice with data:', { orderId: order.id, invoiceData })
-      
-      try {
-        const newInvoice = await createInvoiceFromOrder(order.id, invoiceData)
-        
-        console.log('Invoice created successfully:', newInvoice)
-        
-        toast({
-          title: "Success",
-          description: `Invoice ${newInvoice.invoice_number} created successfully`,
-        })
-        
-        // Dispatch event for automatic cache refresh
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('invoice-created', { 
-            detail: { invoiceId: newInvoice?.id, timestamp: Date.now() } 
-          }))
-        }
-        
-        // Refresh invoice data
-        setOrderInvoice(newInvoice)
-      } catch (invoiceError: any) {
-        console.error('Invoice creation failed:', {
-          error: invoiceError,
-          message: invoiceError?.message,
-          response: invoiceError?.response,
-          status: invoiceError?.status,
-          data: invoiceError?.data,
-          stack: invoiceError?.stack,
-        })
-        
-        let invoiceErrorMessage = "Failed to create invoice"
-        if (invoiceError?.response?.data?.message) {
-          invoiceErrorMessage = invoiceError.response.data.message
-        } else if (invoiceError?.data?.message) {
-          invoiceErrorMessage = invoiceError.data.message
-        } else if (invoiceError?.message) {
-          invoiceErrorMessage = invoiceError.message
-        }
-        
-        toast({
-          title: "Invoice Creation Failed",
-          description: invoiceErrorMessage,
-          variant: "destructive",
-        })
-      }
-      
+
+      // Always ask how this invoice is being paid (cash vs. credit) before creating it.
+      setShowPaymentMethodDialog(true)
     } catch (error: any) {
-      console.error('Error in complete order and create invoice:', error)
-      
-      let errorMessage = "Failed to complete order or create invoice"
+      console.error('Error completing order:', error)
+
+      let errorMessage = "Failed to complete order"
       if (error.response?.data?.message) {
         errorMessage = error.response.data.message
       } else if (error.message) {
         errorMessage = error.message
       }
-      
+
       toast({
         title: "Error",
         description: errorMessage,
@@ -402,8 +429,7 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
   
   // Function to view invoice as document
   const handleViewInvoiceDocument = (invoiceId: string) => {
-    // Open invoice in new tab - adjust URL based on your invoice document route
-    window.open(`/sales/invoices/${invoiceId}/document`, '_blank')
+    router.push(`/sales/invoices/${invoiceId}/document`)
   }
 
   const getCurrentStatus = () => {
@@ -521,23 +547,6 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
         title: "Success",
         description: "Payment mapped successfully. Please refresh to see the latest data.",
       });
-    }
-  }
-
-  const getInvoiceStatusColor = (status: string) => {
-    switch (status.toLowerCase()) {
-      case 'paid':
-        return 'bg-green-100 text-green-800'
-      case 'sent':
-        return 'bg-blue-100 text-blue-800'
-      case 'overdue':
-        return 'bg-red-100 text-red-800'
-      case 'partially_paid':
-        return 'bg-yellow-100 text-yellow-800'
-      case 'draft':
-        return 'bg-gray-100 text-gray-800'
-      default:
-        return 'bg-gray-100 text-gray-800'
     }
   }
 
@@ -974,11 +983,11 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
                           <div className="font-medium text-sm">
                             KES {parseFloat(orderInvoice.total_amount.toString()).toFixed(2)}
                           </div>
-                          <Badge 
-                            variant="secondary" 
+                          <Badge
+                            variant="secondary"
                             className={`text-xs ${getInvoiceStatusColor(orderInvoice.status)}`}
                           >
-                            {orderInvoice.status.charAt(0).toUpperCase() + orderInvoice.status.slice(1).replace('_', ' ')}
+                            {getInvoiceStatusLabel(orderInvoice.status)}
                           </Badge>
                         </div>
                       </div>
@@ -1255,6 +1264,126 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Payment Method Dialog - required before an invoice can be created from an order */}
+      <Dialog open={showPaymentMethodDialog} onOpenChange={setShowPaymentMethodDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>How is this being paid?</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setInvoicePaymentOption('instant')}
+                className={`flex items-center gap-2 rounded-md border p-3 text-sm font-medium transition-colors ${
+                  invoicePaymentOption === 'instant'
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                <Wallet className="h-4 w-4" />
+                Instant Payment
+              </button>
+              <button
+                type="button"
+                onClick={() => setInvoicePaymentOption('credit')}
+                className={`flex items-center gap-2 rounded-md border p-3 text-sm font-medium transition-colors ${
+                  invoicePaymentOption === 'credit'
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                <CreditCard className="h-4 w-4" />
+                Credit
+              </button>
+            </div>
+
+            {invoicePaymentOption === 'instant' ? (
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <div className="space-y-2">
+                  <Label htmlFor="order-invoice-payment-method">Payment Method *</Label>
+                  <Select value={invoicePaymentMethod} onValueChange={setInvoicePaymentMethod}>
+                    <SelectTrigger id="order-invoice-payment-method">
+                      <SelectValue placeholder="How was it paid?" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {INSTANT_PAYMENT_METHODS.map((m) => (
+                        <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="order-invoice-transaction-ref">Reference (optional)</Label>
+                  <Input
+                    id="order-invoice-transaction-ref"
+                    value={invoiceTransactionRef}
+                    onChange={(e) => setInvoiceTransactionRef(e.target.value)}
+                    placeholder="M-Pesa code, bank ref, etc."
+                  />
+                </div>
+                <p className="col-span-2 text-xs text-muted-foreground">
+                  The invoice will be created and marked paid immediately. Paying by cheque?
+                  Create it on credit instead, then record the cheque from the invoice — it stays pending until it clears.
+                </p>
+              </div>
+            ) : (
+              <div className="pt-1">
+                {isLoadingInvoiceCreditTerms ? (
+                  <p className="text-sm text-muted-foreground">Loading customer's credit terms...</p>
+                ) : invoiceCreditTerms?.credit_days ? (
+                  <div className="rounded-md bg-purple-50 border border-purple-200 p-3 text-sm">
+                    <p className="font-medium text-purple-900">
+                      Approved terms: Net {invoiceCreditTerms.credit_days} ({invoiceCreditTerms.credit_days} days)
+                    </p>
+                    {invoiceCreditTerms.available_credit != null && (
+                      <p className="text-purple-700">Available credit: KES {Number(invoiceCreditTerms.available_credit).toLocaleString()}</p>
+                    )}
+                    {invoiceCreditTerms.has_pending_change && (
+                      <p className="text-amber-700 mt-1">Note: a terms change is pending GM approval and not yet in effect.</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-md bg-yellow-50 border border-yellow-200 p-3 text-sm text-yellow-800">
+                    No GM-approved credit terms on file for this customer. Get credit terms approved, or
+                    switch to instant payment, before this invoice can be created.
+                  </div>
+                )}
+
+                {invoiceCreditOverage > 0 && (
+                  <div className="mt-3">
+                    <CreditOveragePrompt
+                      overage={invoiceCreditOverage}
+                      downPaymentAmount={invoiceDownPaymentAmount}
+                      onDownPaymentAmountChange={setInvoiceDownPaymentAmount}
+                      downPaymentMethod={invoiceDownPaymentMethod}
+                      onDownPaymentMethodChange={setInvoiceDownPaymentMethod}
+                      downPaymentTransactionRef={invoiceDownPaymentTransactionRef}
+                      onDownPaymentTransactionRefChange={setInvoiceDownPaymentTransactionRef}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPaymentMethodDialog(false)} disabled={isCreatingInvoice}>
+              Cancel
+            </Button>
+            <Button
+              onClick={createInvoiceFromCompletedOrder}
+              disabled={
+                isCreatingInvoice ||
+                (invoicePaymentOption === 'credit' && !invoiceCreditTerms?.credit_days) ||
+                (invoiceCreditOverage > 0 && (!coversOverage(invoiceDownPaymentAmount, invoiceCreditOverage) || !invoiceDownPaymentMethod))
+              }
+            >
+              {isCreatingInvoice ? "Creating..." : "Create Invoice"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Create Dispatch Modal */}
       <CreateDispatchModal

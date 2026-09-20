@@ -5,6 +5,10 @@ export interface Invoice {
   invoice_number: string;
   company_id: string;
   customer_id: string;
+  sales_rep_id?: string | null;
+  payment_type?: 'cash' | 'credit';
+  credit_terms_days?: number | null;
+  days_remaining?: number | null;
   order_id: string | null;
   payment_id: string | null;
   type: 'sales' | 'service' | 'recurring';
@@ -52,6 +56,13 @@ export interface Invoice {
     customer_type?: 'individual' | 'company' | null;
     business_name?: string | null;
   };
+  sales_rep?: {
+    id: string;
+    first_name: string;
+    last_name: string;
+    email: string;
+    full_name?: string;
+  } | null;
   company?: {
     id: string;
     name: string;
@@ -65,6 +76,7 @@ export interface Invoice {
     postal_code?: string | null;
     website?: string | null;
     logo_url?: string | null;
+    letterhead_url?: string | null;
   };
   order?: {
     id: string;
@@ -73,6 +85,7 @@ export interface Invoice {
     order_date?: string;
   };
   line_items?: InvoiceLineItem[];
+  line_items_count?: number;
   created_by_user?: {
     id: string;
     name: string;
@@ -114,9 +127,18 @@ export interface InvoiceLineItem {
 
 export interface CreateInvoiceRequest {
   customer_id: string;
+  sales_rep_id?: string | null;
+  payment_option?: 'instant' | 'credit';
+  payment_method?: string;
+  transaction_id?: string;
+  down_payment_amount?: number;
+  down_payment_method?: string;
+  down_payment_transaction_id?: string;
+  payment_type?: 'cash' | 'credit';
+  credit_terms_days?: number | null;
   type: 'sales' | 'service' | 'recurring';
   invoice_date: string;
-  due_date: string;
+  due_date?: string;
   currency: string;
   payment_terms?: string;
   notes?: string;
@@ -140,6 +162,13 @@ export interface CreateInvoiceFromOrderRequest {
   due_date?: string;
   payment_terms?: string;
   notes?: string;
+  sales_rep_id?: string | null;
+  payment_option?: 'instant' | 'credit';
+  payment_method?: string;
+  transaction_id?: string;
+  down_payment_amount?: number;
+  down_payment_method?: string;
+  down_payment_transaction_id?: string;
 }
 
 export interface InvoiceStatistics {
@@ -563,4 +592,27 @@ export async function getInvoicesOutstandingBalances(invoiceIds: string[]): Prom
   } catch (error: any) {
     throw new Error(`Failed to fetch invoice balances: ${error.message || "Unknown error"}`);
   }
+}
+
+export interface SalesRep {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  full_name: string;
+}
+
+export async function fetchSalesReps(): Promise<SalesRep[]> {
+  const response = await apiCall<{ data: SalesRep[] }>("/invoices-sales-reps", "GET", undefined, true);
+  return response.data;
+}
+
+export async function assignSalesRep(invoiceId: string, salesRepId: string | null): Promise<Invoice> {
+  const response = await apiCall<{ message: string; data: Invoice }>(
+    `/invoices/${invoiceId}/assign-rep`,
+    "POST",
+    { sales_rep_id: salesRepId },
+    true
+  );
+  return response.data;
 }

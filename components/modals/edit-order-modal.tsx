@@ -13,12 +13,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
-import { Plus, Search, ShoppingCart, Trash2, X, Edit } from "lucide-react"
+import { Plus, Search, ShoppingCart, Trash2, X, Edit, Wallet, CreditCard as CreditCardIcon } from "lucide-react"
+import { getCreditOverage, coversOverage } from "@/lib/credit-overage"
+import { createPayment } from "@/lib/payments"
+import { CreditOveragePrompt } from "@/components/credit-overage-prompt"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import apiCall from "@/lib/api"
 import { Product, ProductVariant, getProducts } from "@/lib/products"
-import { getCustomers, Customer as LibCustomer } from "@/lib/customers"
+import { getCustomers, Customer as LibCustomer, fetchCustomerCreditTerms, CustomerCreditTerms, getCustomerDisplayName } from "@/lib/customers"
 import { OrderDetail } from "@/lib/orders"
 
 type Customer = LibCustomer
@@ -73,6 +76,28 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
   const [paymentStatus, setPaymentStatus] = useState("Unpaid")
   const [amountPaid, setAmountPaid] = useState(0)
   const [discount, setDiscount] = useState(0)
+  const [paymentOption, setPaymentOption] = useState<'instant' | 'credit'>('instant')
+  const [creditTerms, setCreditTerms] = useState<CustomerCreditTerms | null>(null)
+  const [isLoadingCreditTerms, setIsLoadingCreditTerms] = useState(false)
+  const [downPaymentAmount, setDownPaymentAmount] = useState(0)
+  const [downPaymentMethod, setDownPaymentMethod] = useState("")
+  const [downPaymentTransactionRef, setDownPaymentTransactionRef] = useState("")
+
+  useEffect(() => {
+    const customerId = selectedCustomer?.id
+    setDownPaymentAmount(0)
+    setDownPaymentMethod("")
+    setDownPaymentTransactionRef("")
+    if (!customerId) {
+      setCreditTerms(null)
+      return
+    }
+    setIsLoadingCreditTerms(true)
+    fetchCustomerCreditTerms(customerId)
+      .then((terms) => setCreditTerms(terms))
+      .catch(() => setCreditTerms(null))
+      .finally(() => setIsLoadingCreditTerms(false))
+  }, [selectedCustomer?.id])
 
   // Fetch products only once per modal open
   useEffect(() => {
@@ -122,7 +147,8 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
           tags: [],
           preferred_communication_channel: null,
           last_contact_date: null,
-          customer_type: null,
+          customer_type: (order.customer.customer_type as Customer["customer_type"]) || null,
+          business_name: order.customer.business_name || null,
           loyalty_points: 0,
           first_name: "",
           last_name: "",
@@ -148,6 +174,7 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
       setTrackingNumber(order.tracking_number || "")
       setStatus(order.status.charAt(0).toUpperCase() + order.status.slice(1)) // Capitalize first letter
       setPaymentStatus(order.payment_status.charAt(0).toUpperCase() + order.payment_status.slice(1))
+      setPaymentOption(order.payment_type === 'credit' ? 'credit' : 'instant')
       setAmountPaid(parseFloat(order.amount_paid || "0"))
     }
   }, [order, open])
@@ -308,6 +335,10 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
     return subtotal + tax - discountAmount
   }
 
+  const creditOverage = paymentOption === 'credit' && creditTerms?.credit_days
+    ? getCreditOverage(calculateTotal(), creditTerms.available_credit)
+    : 0
+
   const handleUpdateOrder = async () => {
     // Validation
     if (!selectedCustomer) {
@@ -317,6 +348,16 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
 
     if (orderItems.length === 0) {
       toast.error("Please add at least one product")
+      return
+    }
+
+    if (paymentOption === 'credit' && !creditTerms?.credit_days) {
+      toast.error("This customer has no GM-approved credit terms. Get credit terms approved, or switch to instant payment.")
+      return
+    }
+
+    if (creditOverage > 0 && (!coversOverage(downPaymentAmount, creditOverage) || !downPaymentMethod)) {
+      toast.error(`This exceeds available credit by KES ${creditOverage.toLocaleString()}. Enter how that amount will be paid now to proceed.`)
       return
     }
 
@@ -335,6 +376,8 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
         store_id: storeId,
         status: status.toLowerCase(),
         payment_status: paymentStatus.toLowerCase(),
+        payment_type: paymentOption === 'credit' ? 'credit' : 'cash',
+        amount_paid: amountPaid || undefined,
         discount,
         tax: taxAmount,
         currency: "KES",
@@ -349,7 +392,20 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
 
       // Make the API call to update the order
       await apiCall(`/orders/${order?.id}`, "PUT", payload)
-      
+
+      // Record a real payment against the order for the portion covering the
+      // credit overage, so it shows up in payment history rather than just
+      // being a number written into the order's amount_paid field.
+      if (creditOverage > 0 && order?.id) {
+        await createPayment({
+          order_id: order.id,
+          payment_method: downPaymentMethod,
+          amount_paid: downPaymentAmount,
+          transaction_id: downPaymentTransactionRef || undefined,
+          status: 'completed',
+        })
+      }
+
       toast.success("Order updated successfully!", { position: "bottom-left" })
       onOpenChange(false)
       onOrderUpdated()
@@ -449,7 +505,7 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
                             className="p-3 hover:bg-gray-50 cursor-pointer"
                             onClick={() => handleSelectCustomer(customer)}
                           >
-                            <div className="font-medium">{customer.name}</div>
+                            <div className="font-medium">{getCustomerDisplayName(customer)}</div>
                             <div className="text-sm text-gray-500">{customer.email}</div>
                             <div className="text-sm text-gray-500">{customer.phone}</div>
                           </div>
@@ -462,7 +518,7 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
                     <div className="mt-4 p-4 border rounded-md bg-gray-50">
                       <div className="flex justify-between items-start">
                         <div>
-                          <div className="font-medium">{selectedCustomer.name}</div>
+                          <div className="font-medium">{getCustomerDisplayName(selectedCustomer)}</div>
                           <div className="text-sm text-gray-500">{selectedCustomer.email}</div>
                           <div className="text-sm text-gray-500">{selectedCustomer.phone}</div>
                           <div className="text-sm text-gray-500">{selectedCustomer.address}</div>
@@ -636,11 +692,11 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
               </div>
             ) : (
               <div className="space-y-4">
-                <div className="border rounded-md overflow-hidden">
+                <div className="border rounded-md overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-full sm:w-auto">
                           Product
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -669,8 +725,8 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
                         const itemKey = getOrderItemKey(item)
                         return (
                           <tr key={index}>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <div className="text-sm font-medium text-gray-900">{item.product_name}</div>
+                            <td className="px-4 py-3 max-w-[240px]">
+                              <div className="text-sm font-medium text-gray-900 break-words">{item.product_name}</div>
                               {item.variant_name && (
                                 <div className="text-xs text-gray-500">{item.variant_name}</div>
                               )}
@@ -795,6 +851,73 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
             )}
           </div>
 
+          {/* How is this being paid? */}
+          <div className="space-y-3 rounded-lg border p-4">
+            <Label>How is this being paid? *</Label>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setPaymentOption('instant')}
+                className={`flex items-center gap-2 rounded-md border p-3 text-sm font-medium transition-colors ${
+                  paymentOption === 'instant'
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                <Wallet className="h-4 w-4" />
+                Cash / Instant
+              </button>
+              <button
+                type="button"
+                onClick={() => setPaymentOption('credit')}
+                className={`flex items-center gap-2 rounded-md border p-3 text-sm font-medium transition-colors ${
+                  paymentOption === 'credit'
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                <CreditCardIcon className="h-4 w-4" />
+                Credit
+              </button>
+            </div>
+
+            {paymentOption === 'credit' && (
+              isLoadingCreditTerms ? (
+                <p className="text-sm text-muted-foreground">Loading customer's credit terms...</p>
+              ) : !selectedCustomer ? (
+                <p className="text-sm text-muted-foreground">Select a customer to see their credit terms.</p>
+              ) : creditTerms?.credit_days ? (
+                <div className="rounded-md bg-purple-50 border border-purple-200 p-3 text-sm">
+                  <p className="font-medium text-purple-900">
+                    Approved terms: Net {creditTerms.credit_days} ({creditTerms.credit_days} days)
+                  </p>
+                  {creditTerms.available_credit != null && (
+                    <p className="text-purple-700">Available credit: KES {Number(creditTerms.available_credit).toLocaleString()}</p>
+                  )}
+                  {creditTerms.has_pending_change && (
+                    <p className="text-amber-700 mt-1">Note: a terms change is pending GM approval and not yet in effect.</p>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-md bg-yellow-50 border border-yellow-200 p-3 text-sm text-yellow-800">
+                  No GM-approved credit terms on file for this customer. Get credit terms approved, or
+                  switch to instant payment, before this order can be saved.
+                </div>
+              )
+            )}
+            {creditOverage > 0 && (
+              <CreditOveragePrompt
+                overage={creditOverage}
+                downPaymentAmount={downPaymentAmount}
+                onDownPaymentAmountChange={setDownPaymentAmount}
+                downPaymentMethod={downPaymentMethod}
+                onDownPaymentMethodChange={setDownPaymentMethod}
+                downPaymentTransactionRef={downPaymentTransactionRef}
+                onDownPaymentTransactionRefChange={setDownPaymentTransactionRef}
+              />
+            )}
+          </div>
+
           {/* Order Details */}
           <div className="space-y-4">
             <h3 className="text-lg font-medium">Order Details</h3>
@@ -877,7 +1000,14 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
             >
               Cancel
             </Button>
-            <Button onClick={handleUpdateOrder} disabled={loading}>
+            <Button
+              onClick={handleUpdateOrder}
+              disabled={
+                loading ||
+                (paymentOption === 'credit' && !creditTerms?.credit_days) ||
+                (creditOverage > 0 && (!coversOverage(downPaymentAmount, creditOverage) || !downPaymentMethod))
+              }
+            >
               {loading && <Edit className="mr-2 h-4 w-4 animate-spin" />}
               Update Order
             </Button>

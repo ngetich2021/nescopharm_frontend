@@ -274,7 +274,7 @@ export default function BankAccountsPage() {
                       <div>
                         <p className="font-medium">{account.bank_name}</p>
                         <p className="text-sm text-muted-foreground">
-                          {account.branch || 'Main Branch'}
+                          {account.branch_name || 'Main Branch'}
                         </p>
                       </div>
                     </TableCell>
@@ -287,7 +287,7 @@ export default function BankAccountsPage() {
                       {formatCurrency(account.current_balance.toString())}
                     </TableCell>
                     <TableCell className="font-mono">
-                      {account.currency || 'KES'}
+                      {account.currency_code || 'KES'}
                     </TableCell>
                     <TableCell>
                       <Badge className={getStatusColor(account.is_active)}>
@@ -324,34 +324,45 @@ function CreateBankAccountForm({ onSuccess }: { onSuccess: () => void }) {
     account_name: '',
     account_number: '',
     bank_name: '',
-    branch: '',
+    branch_name: '',
     account_type: 'checking' as const,
-    currency: 'KES',
+    currency_code: 'KES',
     current_balance: 0,
     opening_balance: 0,
     opening_date: new Date().toISOString().split('T')[0],
     is_active: true
   })
+  const [mpesaPaybill, setMpesaPaybill] = useState('')
+  const [mpesaAccount, setMpesaAccount] = useState('')
   const [loading, setLoading] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
       setLoading(true)
-      await financeApi.createBankAccount(formData)
+      const payload: Partial<BankAccount> = { ...formData }
+      if (mpesaPaybill.trim() || mpesaAccount.trim()) {
+        payload.bank_details = {
+          ...(mpesaPaybill.trim() && { mpesa_paybill: mpesaPaybill.trim() }),
+          ...(mpesaAccount.trim() && { mpesa_account: mpesaAccount.trim() }),
+        }
+      }
+      await financeApi.createBankAccount(payload)
       onSuccess()
       setFormData({
         account_name: '',
         account_number: '',
         bank_name: '',
-        branch: '',
+        branch_name: '',
         account_type: 'checking',
-        currency: 'KES',
+        currency_code: 'KES',
         current_balance: 0,
         opening_balance: 0,
         opening_date: new Date().toISOString().split('T')[0],
         is_active: true
       })
+      setMpesaPaybill('')
+      setMpesaAccount('')
     } catch (error) {
       console.error('Error creating bank account:', error)
     } finally {
@@ -396,11 +407,11 @@ function CreateBankAccountForm({ onSuccess }: { onSuccess: () => void }) {
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="branch">Branch Name</Label>
+          <Label htmlFor="branch_name">Branch Name</Label>
           <Input
-            id="branch"
-            value={formData.branch || ''}
-            onChange={(e) => setFormData(prev => ({ ...prev, branch: e.target.value }))}
+            id="branch_name"
+            value={formData.branch_name || ''}
+            onChange={(e) => setFormData(prev => ({ ...prev, branch_name: e.target.value }))}
             placeholder="Downtown Branch"
           />
         </div>
@@ -428,10 +439,10 @@ function CreateBankAccountForm({ onSuccess }: { onSuccess: () => void }) {
           </Select>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="currency">Currency</Label>
-          <Select 
-            value={formData.currency || 'KES'} 
-            onValueChange={(value) => setFormData(prev => ({ ...prev, currency: value }))}
+          <Label htmlFor="currency_code">Currency</Label>
+          <Select
+            value={formData.currency_code || 'KES'}
+            onValueChange={(value) => setFormData(prev => ({ ...prev, currency_code: value }))}
           >
             <SelectTrigger>
               <SelectValue />
@@ -468,6 +479,33 @@ function CreateBankAccountForm({ onSuccess }: { onSuccess: () => void }) {
             onChange={(e) => setFormData(prev => ({ ...prev, opening_balance: parseFloat(e.target.value) || 0 }))}
             placeholder="0.00"
           />
+        </div>
+      </div>
+
+      <div className="space-y-2 rounded-md border p-3">
+        <p className="text-sm font-medium">M-Pesa (optional)</p>
+        <p className="text-xs text-muted-foreground">
+          Shown alongside these bank details at the bottom of every invoice.
+        </p>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="mpesa_paybill">Paybill Number</Label>
+            <Input
+              id="mpesa_paybill"
+              value={mpesaPaybill}
+              onChange={(e) => setMpesaPaybill(e.target.value)}
+              placeholder="982800"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="mpesa_account">Account Number</Label>
+            <Input
+              id="mpesa_account"
+              value={mpesaAccount}
+              onChange={(e) => setMpesaAccount(e.target.value)}
+              placeholder="NESEXP"
+            />
+          </div>
         </div>
       </div>
 

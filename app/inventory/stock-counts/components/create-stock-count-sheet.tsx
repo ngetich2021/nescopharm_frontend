@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -17,7 +17,7 @@ import { createStockCount } from "@/lib/stock-counts"
 import { getUsers } from "@/lib/users"
 import { getStores } from "@/lib/stores"
 import type { StockCount } from "@/app/types"
-import type { Product } from "@/lib/products"
+import type { Product, ProductVariant } from "@/lib/products"
 import type { UserData } from "@/lib/users"
 import type { Store } from "@/lib/stores"
 
@@ -27,13 +27,27 @@ interface CreateStockCountSheetProps {
   onStockCountCreated: (newCount: StockCount) => void
 }
 
+// A single countable line in the sheet. Non-variant products produce exactly
+// one line. A product with has_variations produces one line per variant
+// (never one combined line for the whole product), so expected_quantity can
+// reflect each variant's own stock_quantity instead of the parent product's.
+interface CountLine {
+  key: string // product.id, or `${product.id}:${variant.id}` for a variant line
+  product: Product
+  variant: ProductVariant | null
+  label: string
+  sku: string | null
+  stockQuantity: number
+  categoryName: string | null
+}
+
 export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreated }: CreateStockCountSheetProps) {
   const { toast } = useToast()
   const [saving, setSaving] = useState(false)
   const [products, setProducts] = useState<Product[]>([])
   const [users, setUsers] = useState<UserData[]>([])
   const [stores, setStores] = useState<Store[]>([])
-  const [selectedProducts, setSelectedProducts] = useState<string[]>([])
+  const [selectedLineKeys, setSelectedLineKeys] = useState<string[]>([])
   const [loadingProducts, setLoadingProducts] = useState(false)
   const [loadingUsers, setLoadingUsers] = useState(false)
   const [loadingStores, setLoadingStores] = useState(false)
@@ -53,8 +67,23 @@ export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreate
     async function fetchProducts() {
       try {
         setLoadingProducts(true)
-        const { data: productsList } = await getProducts()
-        setProducts(productsList || [])
+        // Fetch the ENTIRE catalog, not just the first page. getProducts()
+        // defaults to page=1/pageSize=20, which silently capped this sheet at
+        // 20 products company-wide. Mirror the pagination loop used in
+        // app/inventory/products/page.tsx: fetch page 1 at page size 100, read
+        // pagination.last_page, then fetch and concat the remaining pages.
+        const first = await getProducts(1, 100)
+        let allProducts = Array.isArray(first.data) ? first.data : []
+        const lastPage = first.pagination?.last_page || 1
+        if (lastPage > 1) {
+          for (let page = 2; page <= lastPage; page++) {
+            const resp = await getProducts(page, 100)
+            if (Array.isArray(resp.data)) {
+              allProducts = allProducts.concat(resp.data)
+            }
+          }
+        }
+        setProducts(allProducts)
       } catch (error: any) {
         toast({
           title: "Error",
@@ -69,7 +98,8 @@ export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreate
     async function fetchUsers() {
       try {
         setLoadingUsers(true)
-        const usersList = await getUsers()
+        // Only warehouse in-charge users should be assignable to a stock count.
+        const usersList = await getUsers({ role_scope: "warehouse_incharge" })
         setUsers(usersList || [])
       } catch (error: any) {
         toast({
@@ -111,7 +141,7 @@ export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreate
         notes: "",
         assigned_to: "",
       })
-      setSelectedProducts([])
+      setSelectedLineKeys([])
       setProductSelectionMode("all")
       setSelectedCategory("")
       setSearchTerm("")
@@ -123,34 +153,98 @@ export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreate
     setFormState((prev) => ({ ...prev, [name]: value }))
   }
 
-  const handleProductSelection = (productId: string, isChecked: boolean) => {
-    setSelectedProducts((prev) => (isChecked ? [...prev, productId] : prev.filter((id) => id !== productId)))
+  const handleLineSelection = (lineKey: string, isChecked: boolean) => {
+    setSelectedLineKeys((prev) => (isChecked ? [...prev, lineKey] : prev.filter((key) => key !== lineKey)))
   }
 
-  // Get unique categories from products
-  const categories = Array.from(new Set(products.map(p => p.category?.name).filter(Boolean))) as string[]
+  // Expand products into countable lines: one line per variant for
+  // has_variations products (so each variant gets its own expected_quantity
+  // from variant.stock_quantity), one line for everything else. Also apply
+  // the store filter here so the picker only offers items whose store_id is
+  // null (unassigned - available to any store) or equals the selected store,
+  // matching the same null-tolerant rule the backend now enforces.
+  const countLines = useMemo<CountLine[]>(() => {
+    const selectedStoreId = formState.location
+    const lines: CountLine[] = []
 
-  // Filter products based on search and mode
-  const filteredProducts = products.filter(product => {
-    const matchesSearch = searchTerm === "" || 
-      product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (product.sku && product.sku.toLowerCase().includes(searchTerm.toLowerCase()))
-    
+    for (const product of products) {
+      const productStoreOk = !selectedStoreId || !product.store_id || product.store_id === selectedStoreId
+      if (!productStoreOk) continue
+
+      const categoryName = product.category?.name ?? null
+
+      if (product.has_variations && Array.isArray(product.variants) && product.variants.length > 0) {
+        for (const variant of product.variants) {
+          const variantStoreOk = !selectedStoreId || !variant.store_id || variant.store_id === selectedStoreId
+          if (!variantStoreOk) continue
+
+          lines.push({
+            key: `${product.id}:${variant.id}`,
+            product,
+            variant,
+            label: `${product.name} - ${variant.name}`,
+            sku: variant.sku || product.sku || null,
+            // Clamp to 0 - some imported records have a negative stock_quantity
+            // (a data-entry artifact), and the backend rejects a negative
+            // expected_quantity outright, which would otherwise silently block
+            // creating a stock count for the whole catalog.
+            stockQuantity: Math.max(0, variant.stock_quantity || 0),
+            categoryName,
+          })
+        }
+      } else {
+        lines.push({
+          key: product.id,
+          product,
+          variant: null,
+          label: product.name,
+          sku: product.sku || null,
+          stockQuantity: Math.max(0, product.stock_quantity || 0),
+          categoryName,
+        })
+      }
+    }
+
+    return lines
+  }, [products, formState.location])
+
+  // Get unique categories from the countable lines (not raw products), so a
+  // category only appears when it has at least one line countable at the
+  // selected store.
+  const categories = Array.from(new Set(countLines.map((l) => l.categoryName).filter(Boolean))) as string[]
+
+  // Filter lines based on search and mode
+  const filteredLines = countLines.filter((line) => {
+    const matchesSearch =
+      searchTerm === "" ||
+      line.label.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (line.sku && line.sku.toLowerCase().includes(searchTerm.toLowerCase()))
+
     if (productSelectionMode === "category" && selectedCategory) {
-      return matchesSearch && product.category?.name === selectedCategory
+      return matchesSearch && line.categoryName === selectedCategory
     }
     return matchesSearch
   })
 
-  // Calculate products to count based on mode
-  const getProductsToCount = () => {
+  // The lines that are actually in scope for the current selection mode.
+  const linesInScope = (): CountLine[] => {
     if (productSelectionMode === "all") {
-      return products.length
+      return countLines
     } else if (productSelectionMode === "category" && selectedCategory) {
-      return products.filter(p => p.category?.name === selectedCategory).length
+      return countLines.filter((l) => l.categoryName === selectedCategory)
     } else {
-      return selectedProducts.length
+      return countLines.filter((l) => selectedLineKeys.includes(l.key))
     }
+  }
+
+  // Calculate items/products to count based on mode. A "product" here means
+  // a distinct product id - a variation-bearing product with 3 variants
+  // contributes 3 items but only 1 product, so the two counts can now differ.
+  const getCountSummary = () => {
+    const lines = linesInScope()
+    const itemCount = lines.length
+    const productCount = new Set(lines.map((l) => l.product.id)).size
+    return { itemCount, productCount }
   }
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -170,10 +264,10 @@ export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreate
       return
     }
 
-    if (productSelectionMode === "manual" && selectedProducts.length === 0) {
+    if (productSelectionMode === "manual" && selectedLineKeys.length === 0) {
       toast({
         title: "Validation Error",
-        description: "Please select at least one product for manual selection mode.",
+        description: "Please select at least one item for manual selection mode.",
         variant: "destructive",
       })
       setSaving(false)
@@ -192,35 +286,20 @@ export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreate
 
     try {
       // Get the selected store
-      const selectedStore = stores.find(s => s.id === location)
+      const selectedStore = stores.find((s) => s.id === location)
       if (!selectedStore) throw new Error("Selected store not found")
 
-      // Prepare items data based on selection mode
-      let items: Array<{ product_id: string; expected_quantity: number; counted_quantity: null; notes: string }>
-      
-      if (productSelectionMode === "all") {
-        items = products.map((product) => ({
-          product_id: product.id,
-          expected_quantity: product.stock_quantity || 0,
-          counted_quantity: null,
-          notes: "",
-        }))
-      } else if (productSelectionMode === "category" && selectedCategory) {
-        const categoryProducts = products.filter(p => p.category?.name === selectedCategory)
-        items = categoryProducts.map((product) => ({
-          product_id: product.id,
-          expected_quantity: product.stock_quantity || 0,
-          counted_quantity: null,
-          notes: "",
-        }))
-      } else {
-        items = selectedProducts.map((productId) => ({
-          product_id: productId,
-          expected_quantity: products.find((p) => p.id === productId)?.stock_quantity || 0,
-          counted_quantity: null,
-          notes: "",
-        }))
-      }
+      // Build submission items from the in-scope lines. A variant line sends
+      // both product_id and variant_id; a simple product line sends only
+      // product_id (no variant_id), matching what the backend now expects.
+      const linesToSubmit = linesInScope()
+      const items = linesToSubmit.map((line) => ({
+        product_id: line.product.id,
+        ...(line.variant ? { variant_id: String(line.variant.id) } : {}),
+        expected_quantity: line.stockQuantity || 0,
+        counted_quantity: null,
+        notes: "",
+      }))
 
       // Create stock count via API
       const payload = {
@@ -234,16 +313,16 @@ export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreate
         assigned_to: assigned_to || undefined,
         items,
       }
-      
+
       console.log("Creating stock count with payload:", JSON.stringify(payload, null, 2))
-      
+
       const newStockCount = await createStockCount(payload)
 
       if (!newStockCount) throw new Error("Failed to create stock count")
 
       toast({
         title: "Success",
-        description: `Stock count created successfully with ${items.length} products!`,
+        description: `Stock count created successfully with ${items.length} item${items.length !== 1 ? "s" : ""}!`,
       })
       onStockCountCreated(newStockCount)
       onOpenChange(false)
@@ -256,7 +335,7 @@ export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreate
         notes: "",
         assigned_to: "",
       })
-      setSelectedProducts([])
+      setSelectedLineKeys([])
       setProductSelectionMode("all")
       setSelectedCategory("")
       setSearchTerm("")
@@ -271,6 +350,8 @@ export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreate
       setSaving(false)
     }
   }
+
+  const { itemCount: summaryItemCount, productCount: summaryProductCount } = getCountSummary()
 
   return (
     <Sheet open={isOpen} onOpenChange={onOpenChange}>
@@ -363,11 +444,11 @@ export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreate
                       {loadingUsers ? (
                         <SelectItem value="loading" disabled>Loading users...</SelectItem>
                       ) : users.length === 0 ? (
-                        <SelectItem value="none" disabled>No users available</SelectItem>
+                        <SelectItem value="none" disabled>No warehouse in-charge users available</SelectItem>
                       ) : (
                         users.map((user) => (
                           <SelectItem key={user.id} value={user.email}>
-                            {user.first_name && user.last_name 
+                            {user.first_name && user.last_name
                               ? `${user.first_name} ${user.last_name} (${user.email})`
                               : user.email}
                           </SelectItem>
@@ -389,12 +470,12 @@ export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreate
             <CardContent>
               <div className="space-y-2">
                 <Label htmlFor="notes">Notes</Label>
-                <Textarea 
-                  id="notes" 
-                  name="notes" 
-                  value={formState.notes} 
-                  onChange={handleFormChange} 
-                  rows={3} 
+                <Textarea
+                  id="notes"
+                  name="notes"
+                  value={formState.notes}
+                  onChange={handleFormChange}
+                  rows={3}
                   placeholder="Add any special instructions or notes..."
                 />
               </div>
@@ -406,9 +487,11 @@ export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreate
             <CardHeader>
               <CardTitle className="text-base">Products to Count *</CardTitle>
               <CardDescription>
-                {getProductsToCount() > 0 
-                  ? `${getProductsToCount()} product${getProductsToCount() !== 1 ? 's' : ''} will be counted`
-                  : 'Select which products to include in this count'}
+                {summaryItemCount > 0
+                  ? summaryItemCount === summaryProductCount
+                    ? `${summaryItemCount} product${summaryItemCount !== 1 ? "s" : ""} will be counted`
+                    : `${summaryItemCount} item${summaryItemCount !== 1 ? "s" : ""} across ${summaryProductCount} product${summaryProductCount !== 1 ? "s" : ""} will be counted`
+                  : "Select which products to include in this count"}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -441,7 +524,7 @@ export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreate
                       ) : (
                         categories.map((category) => (
                           <SelectItem key={category} value={category}>
-                            {category} ({products.filter(p => p.category?.name === category).length} products)
+                            {category} ({countLines.filter((l) => l.categoryName === category).length} items)
                           </SelectItem>
                         ))
                       )}
@@ -466,41 +549,41 @@ export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreate
                         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                         <span className="ml-2 text-muted-foreground">Loading products...</span>
                       </div>
-                    ) : filteredProducts.length === 0 ? (
+                    ) : filteredLines.length === 0 ? (
                       <p className="text-center text-muted-foreground py-8">
-                        {searchTerm ? 'No products match your search' : 'No products available'}
+                        {searchTerm ? "No products match your search" : "No products available"}
                       </p>
                     ) : (
-                      filteredProducts.map((product) => (
-                        <div key={product.id} className="flex items-start space-x-2 p-2 rounded hover:bg-muted/50 transition-colors">
+                      filteredLines.map((line) => (
+                        <div key={line.key} className="flex items-start space-x-2 p-2 rounded hover:bg-muted/50 transition-colors">
                           <input
                             type="checkbox"
-                            id={`product-${product.id}`}
-                            checked={selectedProducts.includes(product.id)}
-                            onChange={(e) => handleProductSelection(product.id, e.target.checked)}
+                            id={`line-${line.key}`}
+                            checked={selectedLineKeys.includes(line.key)}
+                            onChange={(e) => handleLineSelection(line.key, e.target.checked)}
                             className="mt-0.5 h-4 w-4 text-[#1E2764] border-gray-300 rounded focus:ring-[#1E2764]"
                           />
                           <label
-                            htmlFor={`product-${product.id}`}
+                            htmlFor={`line-${line.key}`}
                             className="text-sm leading-tight cursor-pointer flex-1"
                           >
-                            <div className="font-medium">{product.name}</div>
+                            <div className="font-medium">{line.label}</div>
                             <div className="text-xs text-muted-foreground">
-                              {product.sku || 'No SKU'} • Stock: {product.stock_quantity || 0}
+                              {line.sku || "No SKU"} • Stock: {line.stockQuantity}
                             </div>
                           </label>
                         </div>
                       ))
                     )}
                   </div>
-                  {selectedProducts.length > 0 && (
+                  {selectedLineKeys.length > 0 && (
                     <div className="flex items-center justify-between pt-2 text-sm">
-                      <span className="text-muted-foreground">{selectedProducts.length} products selected</span>
+                      <span className="text-muted-foreground">{selectedLineKeys.length} item{selectedLineKeys.length !== 1 ? "s" : ""} selected</span>
                       <Button
                         type="button"
                         variant="ghost"
                         size="sm"
-                        onClick={() => setSelectedProducts([])}
+                        onClick={() => setSelectedLineKeys([])}
                       >
                         Clear selection
                       </Button>
@@ -515,14 +598,15 @@ export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreate
                   <p className="text-sm text-blue-900 dark:text-blue-100">
                     {productSelectionMode === "all" ? (
                       <>
-                        <strong>Full inventory count:</strong> All {products.length} products in your inventory will be included in this count.
+                        <strong>Full inventory count:</strong> All {summaryProductCount} product{summaryProductCount !== 1 ? "s" : ""} in your inventory
+                        {summaryItemCount !== summaryProductCount ? ` (${summaryItemCount} items, including per-variant lines)` : ""} will be included in this count.
                       </>
                     ) : selectedCategory ? (
                       <>
-                        <strong>Category count:</strong> All products in the "{selectedCategory}" category will be included ({products.filter(p => p.category?.name === selectedCategory).length} products).
+                        <strong>Category count:</strong> All items in the "{selectedCategory}" category will be included ({countLines.filter((l) => l.categoryName === selectedCategory).length} items).
                       </>
                     ) : (
-                      'Select a category to see how many products will be counted.'
+                      "Select a category to see how many items will be counted."
                     )}
                   </p>
                 </div>

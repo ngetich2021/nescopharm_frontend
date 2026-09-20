@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { toast } from "@/components/ui/use-toast"
 import { Loader2, Plus, Trash2, FileText, DollarSign, AlertCircle } from "lucide-react"
+import { getCustomerDisplayName } from "@/lib/customers"
 import { 
   allocatePaymentToInvoices, 
   getPaymentAvailableAmount, 
@@ -293,7 +294,7 @@ export function PaymentAllocationModal({
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label className="text-sm text-muted-foreground">Customer</Label>
-                  <p>{payment.customers?.name || 'N/A'}</p>
+                  <p>{payment.customers ? getCustomerDisplayName(payment.customers) : 'N/A'}</p>
                 </div>
                 <div>
                   <Label className="text-sm text-muted-foreground">Payment Method</Label>

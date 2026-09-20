@@ -44,26 +44,20 @@ export async function uploadDocument(
     formData.append("documentable_id", documentData.documentable_id)
     if (documentData.other_information) formData.append("other_information", documentData.other_information)
     formData.append("document_image", documentData.document_image)
-    
-    const response = await fetch("/api/documents", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem("token")}`,
-      },
-      body: formData,
-    })
-    
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(errorText || "Failed to upload document")
-    }
-    
-    const result = await response.json()
-    
-    if (result.status === "success" && result.data) {
-      return result.data
+
+    // Use the shared apiCall helper (same as getDocuments/getDocument below) so this
+    // hits the real backend host (NEXT_PUBLIC_API_URL) instead of a relative Next.js
+    // path, and so validation errors are parsed as JSON rather than raw response text.
+    const response = await apiCall<{
+      message: any
+      status: string
+      data: Document
+    }>("/documents", "POST", formData, true)
+
+    if (response.status === "success" && response.data) {
+      return response.data
     } else {
-      throw new Error(typeof result.message === "string" ? result.message : "Failed to upload document.")
+      throw new Error(typeof response.message === "string" ? response.message : "Failed to upload document.")
     }
   } catch (error: any) {
     throw new Error(`Failed to upload document: ${error.message || "Unknown error"}`)

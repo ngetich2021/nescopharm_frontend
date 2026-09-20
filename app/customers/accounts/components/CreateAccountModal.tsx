@@ -17,7 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { createCustomerAccount, type CreateCustomerAccountPayload } from "@/lib/customer-accounts";
-import { getCustomers, type Customer } from "@/lib/customers";
+import { getCustomers, type Customer, getCustomerDisplayName } from "@/lib/customers";
 import {
   Select,
   SelectContent,
@@ -447,7 +447,7 @@ export function CreateAccountModal({ open, onOpenChange, onSuccess }: CreateAcco
                 <SelectContent>
                   {customers.map((customer) => (
                     <SelectItem key={customer.id} value={customer.id}>
-                      {customer.business_name || customer.name} {customer.email ? `(${customer.email})` : ''}
+                      {getCustomerDisplayName(customer)} {customer.email ? `(${customer.email})` : ''}
                     </SelectItem>
                   ))}
                 </SelectContent>

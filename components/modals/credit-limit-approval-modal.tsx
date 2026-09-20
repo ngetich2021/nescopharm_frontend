@@ -19,6 +19,8 @@ interface CreditLimitApprovalModalProps {
   action: "approved" | "rejected"
   currentCreditLimit: number
   requestedCreditLimit: number
+  currentCreditDays?: number | null
+  requestedCreditDays?: number | null
   requestReason?: string
 }
 
@@ -39,6 +41,8 @@ export const CreditLimitApprovalModal: React.FC<CreditLimitApprovalModalProps> =
   action,
   currentCreditLimit,
   requestedCreditLimit,
+  currentCreditDays,
+  requestedCreditDays,
   requestReason
 }) => {
   const [formData, setFormData] = useState<FormData>({
@@ -125,7 +129,7 @@ export const CreditLimitApprovalModal: React.FC<CreditLimitApprovalModalProps> =
       <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center p-6 border-b">
           <h2 className={`text-xl font-semibold ${actionColor}`}>
-            {actionText} Credit Limit Update
+            {actionText} Credit Terms Update
           </h2>
           <Button variant="ghost" size="sm" onClick={handleClose}>
             <X className="h-4 w-4" />
@@ -161,6 +165,31 @@ export const CreditLimitApprovalModal: React.FC<CreditLimitApprovalModalProps> =
               </CardContent>
             </Card>
           </div>
+
+          {(currentCreditDays != null || requestedCreditDays != null) && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium text-gray-600">Current Credit Period</CardTitle>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <p className="text-xl font-bold text-gray-800">
+                    {currentCreditDays != null ? `${currentCreditDays} days` : "Not set"}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium text-gray-600">Requested Credit Period</CardTitle>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <p className="text-xl font-bold text-blue-600">
+                    {requestedCreditDays != null ? `${requestedCreditDays} days` : "Unchanged"}
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+          )}
 
           {/* Request Reason Display */}
           {requestReason && (

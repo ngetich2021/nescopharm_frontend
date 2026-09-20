@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { format } from "date-fns";
+import { getCustomerDisplayName } from "@/lib/customers";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -185,10 +186,7 @@ export function CustomerAccountsTable({
                       <div className="flex flex-col">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium">
-                            {account.customer?.customer_type === "company"
-                              ? (account.customer?.business_name || account.customer?.name || "Unknown Customer")
-                              : (account.customer?.name || "Unknown Customer")
-                            }
+                            {account.customer ? getCustomerDisplayName(account.customer) : "Unknown Customer"}
                           </span>
                           {(() => {
                             const pendingCreditLimitApprovals = account.approvals?.filter(

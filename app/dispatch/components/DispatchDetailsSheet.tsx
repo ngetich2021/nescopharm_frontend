@@ -12,6 +12,7 @@ import {
   type RejectDispatchRequest
 } from "@/lib/order-dispatches";
 import { usePermissions } from "@/hooks/use-permissions";
+import { getCustomerDisplayName } from "@/lib/customers";
 import { CreateLogisticsModal } from "./CreateDispatchModal";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -243,10 +244,9 @@ export function DispatchDetailsSheet({
 
   // Can dispatch if approved and not yet dispatched (no logistic assigned)
   const canDispatch = localDispatch.approval_status === 'approved' && !localDispatch.logistic;
-  const customerDisplayName =
-    localDispatch.order?.customer?.customer_type === "company"
-      ? localDispatch.order.customer.business_name || localDispatch.order.customer.name || "N/A"
-      : localDispatch.order?.customer?.name || "N/A";
+  const customerDisplayName = localDispatch.order?.customer
+    ? getCustomerDisplayName(localDispatch.order.customer)
+    : "N/A";
 
   const formatDateTime = (value?: string | null) => {
     if (!value) return "Not available";

@@ -26,6 +26,7 @@ interface Company {
   postal_code: string | null
   website: string | null
   logo_url: string | null
+  letterhead_url: string | null
   is_active: boolean
   created_at: string
   updated_at: string
@@ -56,6 +57,7 @@ export function CompanySettings() {
         postal_code: "",
         website: "",
         logo_url: "",
+        letterhead_url: "",
         is_active: true,
       })
       setLoading(false)
@@ -89,6 +91,7 @@ export function CompanySettings() {
           postal_code: "",
           website: "",
           logo_url: "",
+          letterhead_url: "",
           is_active: true,
         })
       }
@@ -310,6 +313,25 @@ export function CompanySettings() {
                   <Upload className="h-4 w-4" />
                 </Button>
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="letterhead_url">Letterhead URL</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="letterhead_url"
+                  value={formData.letterhead_url || ""}
+                  onChange={(e) => handleInputChange("letterhead_url", e.target.value)}
+                  placeholder="https://example.com/letterhead.png"
+                  className="flex-1"
+                />
+                <Button variant="outline" size="icon">
+                  <Upload className="h-4 w-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Full-width banner shown at the top of downloadable invoices and quotes.
+              </p>
             </div>
 
             <div className="flex items-center space-x-2">

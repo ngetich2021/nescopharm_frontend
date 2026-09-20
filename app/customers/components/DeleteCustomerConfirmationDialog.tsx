@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Trash2 } from "lucide-react";
-import { type Customer, deleteCustomer } from "@/lib/customers";
+import { type Customer, deleteCustomer, getCustomerDisplayName } from "@/lib/customers";
 
 interface DeleteCustomerConfirmationDialogProps {
   open: boolean;
@@ -81,7 +81,7 @@ export function DeleteCustomerConfirmationDialog({
             {canDelete ? (
               <>
                 <p>
-                  Are you sure you want to delete <strong>{customer.name}</strong>?
+                  Are you sure you want to delete <strong>{getCustomerDisplayName(customer)}</strong>?
                 </p>
                 <p className="text-sm text-gray-600">
                   This action cannot be undone. All customer data, including order history 
@@ -91,7 +91,7 @@ export function DeleteCustomerConfirmationDialog({
             ) : (
               <>
                 <p>
-                  Cannot delete <strong>{customer.name}</strong> because they are an active customer with existing orders.
+                  Cannot delete <strong>{getCustomerDisplayName(customer)}</strong> because they are an active customer with existing orders.
                 </p>
                 <p className="text-sm text-gray-600">
                   Active customers with orders cannot be deleted. Please set the customer status to 

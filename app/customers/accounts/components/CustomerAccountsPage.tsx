@@ -323,6 +323,7 @@ export function CustomerAccountsPage() {
           }}
           customerAccountId={creditLimitRequestAccount.id}
           currentCreditLimit={parseFloat(creditLimitRequestAccount.credit_required || "0")}
+          currentCreditDays={creditLimitRequestAccount.credit_days ?? null}
         />
       )}
 
@@ -356,6 +357,12 @@ export function CustomerAccountsPage() {
             parseFloat(creditLimitApprovalAccount.approvals.find(
               approval => approval.id === creditLimitApprovalId
             )?.new_credit_limit || "0") : 0
+          }
+          currentCreditDays={creditLimitApprovalAccount.credit_days ?? null}
+          requestedCreditDays={
+            creditLimitApprovalAccount.approvals?.find(
+              approval => approval.id === creditLimitApprovalId
+            )?.new_credit_days ?? null
           }
           requestReason={
             creditLimitApprovalAccount.approvals?.find(

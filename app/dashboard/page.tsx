@@ -206,16 +206,14 @@ export default function DashboardPage() {
       try {
         const overviewData = await fetchDashboardOverview();
         setOverview(overviewData);
-        const [sales, financial, customer, inventory] = await Promise.all([
-          fetchSalesAnalytics({ period, group_by: "day" }),
-          fetchFinancialAnalytics({ period, group_by: "month" }),
-          fetchCustomerAnalytics({ period, group_by: "month" }),
-          fetchInventoryAnalytics({ period, group_by: "month" }),
-        ]);
-        setSalesAnalytics(sales);
-        setFinancialAnalytics(financial);
-        setCustomerAnalytics(customer);
-        setInventoryAnalytics(inventory);
+
+        // Load sequentially rather than in parallel: the dev backend handles one
+        // request at a time, so firing these together just queues them behind each
+        // other anyway, and risks the browser giving up on the later ones.
+        setSalesAnalytics(await fetchSalesAnalytics({ period, group_by: "day" }));
+        setFinancialAnalytics(await fetchFinancialAnalytics({ period, group_by: "month" }));
+        setCustomerAnalytics(await fetchCustomerAnalytics({ period, group_by: "month" }));
+        setInventoryAnalytics(await fetchInventoryAnalytics({ period, group_by: "month" }));
       } catch (error) {
         console.error("Error loading dashboard data:", error);
       } finally {

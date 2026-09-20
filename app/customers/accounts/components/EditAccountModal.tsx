@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { getCustomerDisplayName } from "@/lib/customers";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, CheckCircle, XCircle } from "lucide-react";
 import { useState, useEffect } from "react";
@@ -521,7 +522,7 @@ export function EditAccountModal({ open, onOpenChange, account, onSuccess }: Edi
               <Label htmlFor="customer">Customer</Label>
               <Input
                 id="customer"
-                value={`${account.customer?.business_name || account.customer?.name} (${account.customer?.email || 'No email'})`}
+                value={`${account.customer ? getCustomerDisplayName(account.customer) : ''} (${account.customer?.email || 'No email'})`}
                 disabled
               />
             </div>

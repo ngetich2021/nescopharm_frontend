@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { 
   ArrowLeft, 
   Send, 
@@ -25,9 +26,11 @@ import {
   CreditCard,
   History,
   Plus,
-  FileText
+  FileText,
+  Printer
 } from "lucide-react"
-import { fetchInvoiceById, deleteInvoice, Invoice, sendInvoice } from "@/lib/invoices"
+import { fetchInvoiceById, deleteInvoice, Invoice, sendInvoice, fetchSalesReps, assignSalesRep, SalesRep } from "@/lib/invoices"
+import { getInvoiceStatusColor, getInvoiceStatusLabel } from "@/lib/invoice-status"
 import { SendInvoiceModal } from "@/components/modals/send-invoice-modal"
 import apiCall from "@/lib/api"
 import { RecordPaymentModal } from "@/components/modals/record-payment-modal"
@@ -62,6 +65,8 @@ export default function InvoiceDetailPage() {
   const [isRecordPaymentModalOpen, setIsRecordPaymentModalOpen] = useState(false)
   const [isPaymentHistoryModalOpen, setIsPaymentHistoryModalOpen] = useState(false)
   const [isMapPaymentModalOpen, setIsMapPaymentModalOpen] = useState(false)
+  const [salesReps, setSalesReps] = useState<SalesRep[]>([])
+  const [isAssigningRep, setIsAssigningRep] = useState(false)
 
   // Send Invoice Modal state
   const [isSendInvoiceModalOpen, setIsSendInvoiceModalOpen] = useState(false)
@@ -71,6 +76,31 @@ export default function InvoiceDetailPage() {
       loadInvoice(params.id as string)
     }
   }, [params.id])
+
+  useEffect(() => {
+    fetchSalesReps().then(setSalesReps).catch(() => setSalesReps([]))
+  }, [])
+
+  const handleAssignRep = async (repId: string) => {
+    if (!invoice) return
+    setIsAssigningRep(true)
+    try {
+      const updated = await assignSalesRep(invoice.id, repId === "none" ? null : repId)
+      setInvoice(updated)
+      toast({
+        title: "Success",
+        description: repId === "none" ? "Sales rep cleared" : "Sales rep assigned",
+      })
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to assign sales rep",
+        variant: "destructive",
+      })
+    } finally {
+      setIsAssigningRep(false)
+    }
+  }
 
   const loadInvoice = async (invoiceId: string) => {
     try {
@@ -238,26 +268,7 @@ export default function InvoiceDetailPage() {
     });
   }
 
-  const getStatusColor = (status: string) => {
-    switch (status.toLowerCase()) {
-      case 'draft':
-        return 'bg-gray-100 text-gray-800'
-      case 'sent':
-        return 'bg-blue-100 text-blue-800'
-      case 'viewed':
-        return 'bg-purple-100 text-purple-800'
-      case 'paid':
-        return 'bg-green-100 text-green-800'
-      case 'partially_paid':
-        return 'bg-yellow-100 text-yellow-800'
-      case 'overdue':
-        return 'bg-red-100 text-red-800'
-      case 'cancelled':
-        return 'bg-gray-100 text-gray-800'
-      default:
-        return 'bg-gray-100 text-gray-800'
-    }
-  }
+  const getStatusColor = getInvoiceStatusColor
 
   if (isLoading) {
     return (
@@ -478,9 +489,9 @@ export default function InvoiceDetailPage() {
 
         <div className="flex items-center gap-2 flex-wrap">
           <Badge className={getStatusColor(invoice.status)}>
-            {invoice.status.replace('_', ' ')}
+            {getInvoiceStatusLabel(invoice.status)}
           </Badge>
-          
+
           {/* Send Options in Header */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -518,10 +529,19 @@ export default function InvoiceDetailPage() {
             </Link>
           )}
           
-          <Button variant="outline" size="sm">
-            <Download className="h-4 w-4 mr-2" />
-            Download PDF
-          </Button>
+          <Link href={`/sales/invoices/${invoice.id}/document?autoprint=1`}>
+            <Button variant="outline" size="sm">
+              <Printer className="h-4 w-4 mr-2" />
+              Print
+            </Button>
+          </Link>
+
+          <Link href={`/sales/invoices/${invoice.id}/document`}>
+            <Button variant="outline" size="sm">
+              <Download className="h-4 w-4 mr-2" />
+              Download PDF
+            </Button>
+          </Link>
 
           {(invoice.status === 'draft' || invoice.status === 'sent') && (
             <Button variant="outline" size="sm" onClick={handleDeleteInvoice} className="text-primary hover:text-primary/80">
@@ -593,7 +613,7 @@ export default function InvoiceDetailPage() {
               <div>
                 <p className="text-sm font-medium">Status</p>
                 <Badge className={getStatusColor(invoice.status)}>
-                  {invoice.status.replace('_', ' ')}
+                  {getInvoiceStatusLabel(invoice.status)}
                 </Badge>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -607,6 +627,49 @@ export default function InvoiceDetailPage() {
                     <p className="text-sm text-muted-foreground">{formatDate(invoice.sent_at)}</p>
                   </div>
                 )}
+                <div>
+                  <p className="text-sm font-medium">Payment Type</p>
+                  <Badge className={invoice.payment_type === 'credit' ? 'bg-purple-100 text-purple-800' : 'bg-slate-100 text-slate-800'}>
+                    {invoice.payment_type === 'credit'
+                      ? `Credit${invoice.credit_terms_days ? ` (Net ${invoice.credit_terms_days})` : ''}`
+                      : 'Cash'}
+                  </Badge>
+                </div>
+                {invoice.days_remaining !== null && invoice.days_remaining !== undefined && (
+                  <div>
+                    <p className="text-sm font-medium">Days Left</p>
+                    <Badge className={
+                      invoice.days_remaining < 0 ? 'bg-red-100 text-red-800'
+                        : invoice.days_remaining <= 7 ? 'bg-yellow-100 text-yellow-800'
+                        : 'bg-green-100 text-green-800'
+                    }>
+                      {invoice.days_remaining < 0 ? `${Math.abs(invoice.days_remaining)}d overdue` : `${invoice.days_remaining}d left`}
+                    </Badge>
+                  </div>
+                )}
+              </div>
+
+              <Separator />
+
+              <div>
+                <p className="text-sm font-medium mb-1">Sales Rep</p>
+                <Select
+                  value={invoice.sales_rep_id || "none"}
+                  onValueChange={handleAssignRep}
+                  disabled={isAssigningRep}
+                >
+                  <SelectTrigger className="w-full sm:w-64">
+                    <SelectValue placeholder="Unassigned" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Unassigned</SelectItem>
+                    {salesReps.map((rep) => (
+                      <SelectItem key={rep.id} value={rep.id}>
+                        {rep.full_name || `${rep.first_name} ${rep.last_name}`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </CardContent>
           </Card>
@@ -803,83 +866,19 @@ export default function InvoiceDetailPage() {
             <CardContent>
               {/* Invoice Template Preview */}
               <div className="bg-white border rounded-lg p-6 lg:p-8 shadow-sm max-h-[800px] overflow-y-auto">
-                {/* Header with Company Logo/Name and Invoice Title */}
-                <div className="flex justify-between items-start mb-6 lg:mb-8">
-                  <div>
-                    <div className="flex items-center gap-3 mb-2">
-                      {company?.logo_url ? (
-                        <div className="w-12 h-12 flex-shrink-0">
-                          <img 
-                            src={company.logo_url} 
-                            alt={`${company.name} logo`}
-                            className="w-full h-full object-contain rounded"
-                            onError={(e) => {
-                              // Fallback to company initial if image fails to load
-                              const target = e.target as HTMLImageElement
-                              target.style.display = 'none'
-                              const fallback = target.nextElementSibling as HTMLElement
-                              if (fallback) fallback.style.display = 'flex'
-                            }}
-                          />
-                          <div className="w-12 h-12 bg-black rounded flex items-center justify-center flex-shrink-0" style={{ display: 'none' }}>
-                            <span className="text-white font-bold text-lg">
-                              {company?.name?.charAt(0)?.toUpperCase() || 'C'}
-                            </span>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="w-12 h-12 bg-black rounded flex items-center justify-center flex-shrink-0">
-                          <span className="text-white font-bold text-lg">
-                            {company?.name?.charAt(0)?.toUpperCase() || user?.company?.name?.charAt(0)?.toUpperCase() || 'C'}
-                          </span>
-                        </div>
-                      )}
-                      <div>
-                        <h2 className="text-base lg:text-lg font-bold">
-                          {company?.name || user?.company?.name || 'Your Company'}
-                        </h2>
-                        <p className="text-xs lg:text-sm text-gray-600">
-                          {company?.description || 'Business Services'}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <h1 className="text-2xl lg:text-3xl font-bold text-gray-800 mb-2">INVOICE</h1>
-                  </div>
-                </div>
-
-                {/* Company Contact Information */}
-                {(company?.email || company?.phone || company?.address) && (
-                  <div className="mb-6 lg:mb-8 pb-4 border-b border-gray-200">
-                    <div className="text-xs lg:text-sm text-gray-600 space-y-1">
-                      {company?.email && (
-                        <p>
-                          <span className="font-medium">Email:</span> {company.email}
-                        </p>
-                      )}
-                      {company?.phone && (
-                        <p>
-                          <span className="font-medium">Phone:</span> {company.phone}
-                        </p>
-                      )}
-                      {company?.address && (
-                        <p>
-                          <span className="font-medium">Address:</span> {company.address}
-                          {company?.city && `, ${company.city}`}
-                          {company?.state && `, ${company.state}`}
-                          {company?.postal_code && ` ${company.postal_code}`}
-                          {company?.country && `, ${company.country}`}
-                        </p>
-                      )}
-                      {company?.website && (
-                        <p>
-                          <span className="font-medium">Website:</span> {company.website}
-                        </p>
-                      )}
-                    </div>
-                  </div>
+                {/* Letterhead Banner */}
+                {company?.letterhead_url && (
+                  <img
+                    src={company.letterhead_url}
+                    alt={`${company.name} letterhead`}
+                    className="w-full h-auto mb-6 lg:mb-8"
+                  />
                 )}
+
+                {/* Invoice Title - company identity already shown once, in the letterhead above */}
+                <div className="flex justify-end items-start mb-6 lg:mb-8">
+                  <h1 className="text-2xl lg:text-3xl font-bold text-gray-800">INVOICE</h1>
+                </div>
 
                 {/* Bill To and Invoice Details */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 mb-6 lg:mb-8">

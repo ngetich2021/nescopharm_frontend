@@ -24,11 +24,15 @@ import {
   MessageCircle,
   ChevronLeft,
   ChevronRight,
-  RefreshCw
+  RefreshCw,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import { Invoice, fetchInvoices, deleteInvoice, sendInvoice, parseInvoiceAmount } from "@/lib/invoices"
+import { getInvoiceStatusColor, getInvoiceStatusLabel } from "@/lib/invoice-status"
 import { useDataCache } from "@/lib/data-cache"
 import { CreateInvoiceModal } from "@/components/modals/create-invoice-modal"
 import { CreateInvoiceFromOrderModal } from "@/components/modals/create-invoice-from-order-modal"
@@ -47,6 +51,9 @@ export function InvoicesTable({ initialInvoices = [] }: InvoicesTableProps) {
   const [searchTerm, setSearchTerm] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
   const [typeFilter, setTypeFilter] = useState("all")
+  const [paymentTypeFilter, setPaymentTypeFilter] = useState("all")
+  const [sortBy, setSortBy] = useState<'due_date' | 'days_remaining' | null>(null)
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(10)
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -115,14 +122,14 @@ export function InvoicesTable({ initialInvoices = [] }: InvoicesTableProps) {
   // Reset to first page when filters change
   useEffect(() => {
     setCurrentPage(1)
-  }, [searchTerm, statusFilter, typeFilter])
+  }, [searchTerm, statusFilter, typeFilter, paymentTypeFilter])
 
   // Only refresh data when filters change, NOT when pagination changes
   useEffect(() => {
     const timer = setTimeout(() => {
       refreshInvoices()
     }, 500) // 500ms debounce to prevent excessive API calls
-    
+
     return () => clearTimeout(timer)
   }, [searchTerm, statusFilter, typeFilter]) // Removed currentPage and itemsPerPage
 
@@ -130,6 +137,7 @@ export function InvoicesTable({ initialInvoices = [] }: InvoicesTableProps) {
   const filteredInvoices = invoices.filter((invoice) =>
     (statusFilter === "all" || invoice.status.toLowerCase() === statusFilter) &&
     (typeFilter === "all" || invoice.type.toLowerCase() === typeFilter) &&
+    (paymentTypeFilter === "all" || invoice.payment_type === paymentTypeFilter) &&
     (searchTerm === "" ||
       (invoice.invoice_number && invoice.invoice_number.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (invoice.customer?.name && invoice.customer.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
@@ -137,30 +145,58 @@ export function InvoicesTable({ initialInvoices = [] }: InvoicesTableProps) {
     )
   )
 
+  // Sortable by Due Date / Days Remaining for credit follow-up; nulls (fully paid) sort last
+  const sortedInvoices = [...filteredInvoices].sort((a, b) => {
+    if (!sortBy) return 0
+    const getValue = (inv: Invoice) =>
+      sortBy === 'due_date' ? new Date(inv.due_date).getTime() : inv.days_remaining
+    const aVal = getValue(a)
+    const bVal = getValue(b)
+    if (aVal === null || aVal === undefined) return 1
+    if (bVal === null || bVal === undefined) return -1
+    return sortDirection === 'asc' ? aVal - bVal : bVal - aVal
+  })
+
+  const toggleSort = (column: 'due_date' | 'days_remaining') => {
+    if (sortBy === column) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortBy(column)
+      setSortDirection('asc')
+    }
+  }
+
+  const SortIcon = ({ column }: { column: 'due_date' | 'days_remaining' }) => {
+    if (sortBy !== column) return <ArrowUpDown className="ml-1 h-3 w-3 inline text-muted-foreground" />
+    return sortDirection === 'asc'
+      ? <ArrowUp className="ml-1 h-3 w-3 inline" />
+      : <ArrowDown className="ml-1 h-3 w-3 inline" />
+  }
+
   // Client-side pagination (like payments table)
-  const totalPages = Math.ceil(filteredInvoices.length / itemsPerPage)
-  const paginatedInvoices = filteredInvoices.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
+  const totalPages = Math.ceil(sortedInvoices.length / itemsPerPage)
+  const paginatedInvoices = sortedInvoices.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
 
   // Status color mapping
-  const getStatusColor = (status: string) => {
-    switch (status.toLowerCase()) {
-      case 'draft':
-        return 'bg-gray-100 text-gray-800'
-      case 'sent':
-        return 'bg-blue-100 text-blue-800'
-      case 'viewed':
-        return 'bg-purple-100 text-purple-800'
-      case 'paid':
-        return 'bg-green-100 text-green-800'
-      case 'partially_paid':
-        return 'bg-yellow-100 text-yellow-800'
-      case 'overdue':
-        return 'bg-red-100 text-red-800'
-      case 'cancelled':
-        return 'bg-gray-100 text-gray-800'
-      default:
-        return 'bg-gray-100 text-gray-800'
+  const getStatusColor = getInvoiceStatusColor
+
+  // Days-remaining badge for credit follow-up: green = comfortable, yellow = due soon,
+  // red = overdue, gray = nothing to collect (paid off or no due date).
+  const getDaysRemainingBadge = (invoice: Invoice) => {
+    const days = invoice.days_remaining
+    if (days === null || days === undefined) {
+      return <span className="text-xs text-muted-foreground">—</span>
     }
+    if (days < 0) {
+      return <Badge className="bg-red-100 text-red-800">{Math.abs(days)}d overdue</Badge>
+    }
+    if (days <= 3) {
+      return <Badge className="bg-red-100 text-red-800">{days}d left</Badge>
+    }
+    if (days <= 7) {
+      return <Badge className="bg-yellow-100 text-yellow-800">{days}d left</Badge>
+    }
+    return <Badge className="bg-green-100 text-green-800">{days}d left</Badge>
   }
 
   // Add state for edit sheet and delete dialog
@@ -281,7 +317,7 @@ export function InvoicesTable({ initialInvoices = [] }: InvoicesTableProps) {
 
   // Calculate item count for each invoice
   const getInvoiceItemCount = (invoice: Invoice): number => {
-    return invoice.line_items?.length || 0
+    return invoice.line_items_count ?? invoice.line_items?.length ?? 0
   }
 
   return (
@@ -411,6 +447,17 @@ export function InvoicesTable({ initialInvoices = [] }: InvoicesTableProps) {
                 <SelectItem value="recurring">Recurring</SelectItem>
               </SelectContent>
             </Select>
+
+            <Select value={paymentTypeFilter} onValueChange={setPaymentTypeFilter}>
+              <SelectTrigger className="w-32">
+                <SelectValue placeholder="Payment" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Cash & Credit</SelectItem>
+                <SelectItem value="cash">Cash</SelectItem>
+                <SelectItem value="credit">Credit</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
@@ -450,10 +497,23 @@ export function InvoicesTable({ initialInvoices = [] }: InvoicesTableProps) {
             <TableRow>
               <TableHead>Invoice #</TableHead>
               <TableHead>Customer</TableHead>
+              <TableHead>Sales Rep</TableHead>
               <TableHead>Amount</TableHead>
               <TableHead>Items</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Date</TableHead>
+              <TableHead
+                className="cursor-pointer select-none"
+                onClick={() => toggleSort('due_date')}
+              >
+                Due Date<SortIcon column="due_date" />
+              </TableHead>
+              <TableHead
+                className="cursor-pointer select-none"
+                onClick={() => toggleSort('days_remaining')}
+              >
+                Days Left<SortIcon column="days_remaining" />
+              </TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -464,12 +524,13 @@ export function InvoicesTable({ initialInvoices = [] }: InvoicesTableProps) {
                 <TableRow key={index}>
                   <TableCell><Skeleton className="h-4 w-24" /></TableCell>
                   <TableCell><Skeleton className="h-4 w-32" /></TableCell>
+                  <TableCell><Skeleton className="h-4 w-24" /></TableCell>
                   <TableCell><Skeleton className="h-4 w-16" /></TableCell>
                   <TableCell><Skeleton className="h-6 w-20 rounded-full" /></TableCell>
                   <TableCell><Skeleton className="h-4 w-24" /></TableCell>
                   <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                  <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                  <TableCell><Skeleton className="h-4 w-16" /></TableCell>
                   <TableCell className="text-right">
                     <Skeleton className="h-8 w-8 ml-auto" />
                   </TableCell>
@@ -477,7 +538,7 @@ export function InvoicesTable({ initialInvoices = [] }: InvoicesTableProps) {
               ))
             ) : paginatedInvoices.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} className="text-center py-8">
+                <TableCell colSpan={10} className="text-center py-8">
                   No invoices found
                 </TableCell>
               </TableRow>
@@ -497,14 +558,21 @@ export function InvoicesTable({ initialInvoices = [] }: InvoicesTableProps) {
                       : (invoice.customer?.name || 'N/A')
                     }
                   </TableCell>
+                  <TableCell>
+                    {invoice.sales_rep
+                      ? (invoice.sales_rep.full_name || `${invoice.sales_rep.first_name} ${invoice.sales_rep.last_name}`)
+                      : <span className="text-xs text-muted-foreground">Unassigned</span>}
+                  </TableCell>
                   <TableCell>{formatCurrency(parseInvoiceAmount(invoice.total_amount))}</TableCell>
                   <TableCell>{getInvoiceItemCount(invoice)}</TableCell>
                   <TableCell>
                     <Badge className={getStatusColor(invoice.status)}>
-                      {invoice.status.replace('_', ' ')}
+                      {getInvoiceStatusLabel(invoice.status)}
                     </Badge>
                   </TableCell>
                   <TableCell>{formatDate(invoice.invoice_date)}</TableCell>
+                  <TableCell>{formatDate(invoice.due_date)}</TableCell>
+                  <TableCell>{getDaysRemainingBadge(invoice)}</TableCell>
                   <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                     <ActionsDropdown invoice={invoice} />
                   </TableCell>

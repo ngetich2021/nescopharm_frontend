@@ -30,7 +30,7 @@ import {
   FileUp,
   FileDown,
 } from "lucide-react"
-import { type Customer, getCustomers, updateCustomer, deleteCustomer } from "@/lib/customers"
+import { type Customer, getCustomers, updateCustomer, deleteCustomer, getCustomerDisplayName } from "@/lib/customers"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
@@ -190,8 +190,11 @@ export default function Customers() {
     (customer) =>
       (statusFilter === "all" || customer?.status === statusFilter) &&
       ((customer?.name && customer.name.toLowerCase().includes(search.toLowerCase())) ||
+        (customer?.business_name && customer.business_name.toLowerCase().includes(search.toLowerCase())) ||
         (customer?.email && customer.email.toLowerCase().includes(search.toLowerCase())) ||
-        (customer?.phone && customer.phone.toLowerCase().includes(search.toLowerCase()))),
+        (customer?.phone && customer.phone.toLowerCase().includes(search.toLowerCase())) ||
+        (customer?.city && customer.city.toLowerCase().includes(search.toLowerCase())) ||
+        (customer?.address && customer.address.toLowerCase().includes(search.toLowerCase()))),
   )
 
   const totalPages = Math.ceil(filteredCustomers.length / rowsPerPage)
@@ -200,7 +203,7 @@ export default function Customers() {
 
   const customerToExportArray = (c: Customer) => [
     c.id,
-    c.name,
+    getCustomerDisplayName(c),
     c.email || "",
     c.phone || "",
     c.status,
@@ -522,7 +525,7 @@ export default function Customers() {
                               checked={selectedCustomers.includes(customer.id)}
                               onCheckedChange={() => toggleSelectCustomer(customer.id)}
                               onClick={(e) => e.stopPropagation()}
-                              aria-label={`Select ${customer.name}`}
+                              aria-label={`Select ${getCustomerDisplayName(customer)}`}
                               className="rounded-sm border-gray-400 data-[state=checked]:bg-primary data-[state=checked]:border-primary"
                             />
                           </div>
@@ -531,7 +534,7 @@ export default function Customers() {
                           className="font-medium text-gray-800 px-4 py-3 cursor-pointer"
                           onClick={() => handleRowClick(customer.id)}
                         >
-                          {customer.name}
+                          {getCustomerDisplayName(customer)}
                         </TableCell>
                         <TableCell
                           className="text-gray-600 px-4 py-3 hidden md:table-cell cursor-pointer"

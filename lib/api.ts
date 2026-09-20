@@ -294,8 +294,15 @@ async function apiCall<T>(
 
     return data as T
   } catch (error: any) {
-    // Friendly message for network errors
+    // Network-level failure (fetch never got a response) - safe to retry regardless of
+    // method, since the request never reached the server.
     if (error.message && error.message.includes('Failed to fetch')) {
+      if (retryCount < MAX_RETRIES) {
+        console.warn(`Retrying ${method} ${path} (attempt ${retryCount + 2}/${MAX_RETRIES + 1}) after network error`);
+        notifyRetry(path, retryCount + 1, MAX_RETRIES)
+        await delay(RETRY_DELAY_MS * (retryCount + 1))
+        return apiCall<T>(path, method, body, requiresAuth, retryCount + 1)
+      }
       throw new Error("Could not connect to the server. Please check your internet connection or try again later.");
     }
 

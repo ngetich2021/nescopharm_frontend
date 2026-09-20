@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { getCustomerDisplayName } from "@/lib/customers";
 import { 
   CreditCard, 
   Calendar, 
@@ -133,7 +134,7 @@ export function ViewAccountModal({ open, onOpenChange, account, onRefresh }: Vie
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">Customer Name</p>
                   <p className="font-medium">
-                    {account.customer?.business_name || account.customer?.name || "N/A"}
+                    {account.customer ? getCustomerDisplayName(account.customer) : "N/A"}
                   </p>
                 </div>
                 <div className="space-y-1">

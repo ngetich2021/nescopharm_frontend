@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast"
 import { createLogistics, CreateLogisticsData } from "@/lib/logistics"
 import { listOrderDispatches, OrderDispatch } from "@/lib/order-dispatches"
 import { getDeliveryPersons, DeliveryPerson } from "@/lib/delivery-persons"
+import { getCustomerDisplayName } from "@/lib/customers"
 
 interface CreateLogisticsSheetProps {
   isOpen: boolean
@@ -189,7 +190,7 @@ export function CreateLogisticsSheet({ isOpen, onOpenChange, onLogisticsCreated 
                   ) : dispatches.length > 0 ? (
                     dispatches.map((dispatch) => (
                       <SelectItem key={dispatch.id} value={dispatch.id}>
-                        {dispatch.dispatch_number} - {dispatch.order?.customer?.name || "Unknown Customer"}
+                        {dispatch.dispatch_number} - {dispatch.order?.customer ? getCustomerDisplayName(dispatch.order.customer) : "Unknown Customer"}
                       </SelectItem>
                     ))
                   ) : (

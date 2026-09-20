@@ -37,7 +37,7 @@ import {
   Download,
   CreditCard
 } from "lucide-react";
-import { type Customer } from "@/lib/customers";
+import { type Customer, getCustomerDisplayName } from "@/lib/customers";
 import { PermissionGuard } from "@/components/PermissionGuard";
 
 interface CustomersTableProps {
@@ -223,10 +223,7 @@ export function CustomersTable({
                   <TableCell>
                     <div className="flex flex-col">
                       <span className="font-medium text-gray-900">
-                        {customer.customer_type === "company" 
-                          ? (customer.business_name || customer.name)
-                          : customer.name
-                        }
+                        {getCustomerDisplayName(customer)}
                       </span>
                       {customer.customer_type === "company" && customer.name && (
                         <span className="text-xs text-gray-500">Contact: {customer.name}</span>

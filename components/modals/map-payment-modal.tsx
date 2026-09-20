@@ -10,6 +10,7 @@ import { toast } from "@/components/ui/use-toast"
 import { mapPaymentToInvoice, MapPaymentRequest, PaymentMappingResponse } from "@/lib/invoices"
 import { getPayments, Payment } from "@/lib/payments"
 import { Loader2, CreditCard, Calendar, Search, X } from "lucide-react"
+import { getCustomerDisplayName } from "@/lib/customers"
 
 interface MapPaymentModalProps {
   isOpen: boolean
@@ -329,7 +330,7 @@ export function MapPaymentModal({
                                 {payment.customer && payment.customer.name && (
                                   <div className="flex items-center gap-1">
                                     <span className="font-medium">Customer:</span>
-                                    <span>{payment.customer.name}</span>
+                                    <span>{getCustomerDisplayName(payment.customer)}</span>
                                   </div>
                                 )}
                                 
@@ -402,7 +403,7 @@ export function MapPaymentModal({
                 {selectedPayment.customer && selectedPayment.customer.name && (
                   <div className="col-span-2">
                     <span className="text-muted-foreground">Customer:</span>
-                    <span className="ml-1 font-medium">{selectedPayment.customer.name}</span>
+                    <span className="ml-1 font-medium">{getCustomerDisplayName(selectedPayment.customer)}</span>
                   </div>
                 )}
                 {selectedPayment.order && selectedPayment.order.order_number && (

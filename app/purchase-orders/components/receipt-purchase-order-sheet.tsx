@@ -35,6 +35,8 @@ export function ReceiptPurchaseOrderSheet({ open, onOpenChange, order, onPurchas
   const { toast } = useToast()
   const [isLoading, setIsLoading] = useState(false)
   const [receiptItems, setReceiptItems] = useState<ReceiptItem[]>([])
+  const [shippingCost, setShippingCost] = useState("")
+  const [logisticsCost, setLogisticsCost] = useState("")
 
   useEffect(() => {
     if (order && order.items) {
@@ -49,6 +51,8 @@ export function ReceiptPurchaseOrderSheet({ open, onOpenChange, order, onPurchas
         variant: item.variant,
         already_received: item.received_quantity || 0
       })))
+      setShippingCost("")
+      setLogisticsCost("")
     }
   }, [order])
 
@@ -57,13 +61,22 @@ export function ReceiptPurchaseOrderSheet({ open, onOpenChange, order, onPurchas
     setIsLoading(true)
     try {
       if (!order) return
-      await receiptPurchaseOrder(order.id, {
+      const result = await receiptPurchaseOrder(order.id, {
         items: receiptItems.map(item => ({
           id: item.id,
           received_quantity: item.received_quantity
-        }))
+        })),
+        shipping_cost: shippingCost ? parseFloat(shippingCost) : 0,
+        logistics_cost: logisticsCost ? parseFloat(logisticsCost) : 0,
       })
       toast({ title: "Success", description: "Purchase order receipted successfully." })
+      if (result.pricing_warnings && result.pricing_warnings.length > 0) {
+        toast({
+          title: "Pricing needs review",
+          description: result.pricing_warnings.join(" "),
+          variant: "destructive",
+        })
+      }
       onPurchaseOrderReceipted()
       onOpenChange(false)
     } catch (error) {
@@ -171,9 +184,44 @@ export function ReceiptPurchaseOrderSheet({ open, onOpenChange, order, onPurchas
               </CardContent>
             </Card>
 
+            {/* Landed Cost Card - actual shipping/logistics cost for THIS shipment,
+                distributed across the products being received to update their
+                cost basis (unit_cost, shipping_cost, logistics_cost). */}
+            <Card className="border-0 shadow-sm bg-card/50">
+              <CardContent className="pt-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Shipping Cost (this shipment)</Label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={shippingCost}
+                      onChange={(e) => setShippingCost(e.target.value)}
+                      placeholder="0.00"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Logistics Cost (this shipment)</Label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={logisticsCost}
+                      onChange={(e) => setLogisticsCost(e.target.value)}
+                      placeholder="0.00"
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Distributed across the products received below to update their landed cost basis.
+                </p>
+              </CardContent>
+            </Card>
+
             {/* Receipt Items Card */}
             <Card className="border-0 shadow-sm bg-card/50">
-              <CardHeader className heapq="pb-4">
+              <CardHeader className="pb-4">
                 <div className="flex items-center justify-between">
                   <CardTitle className="flex items-center gap-2 text-base">
                     <Package className="h-4 w-4 text-primary" />

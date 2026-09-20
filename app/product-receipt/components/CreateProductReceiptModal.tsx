@@ -123,6 +123,8 @@ export function CreateProductReceiptModal({
   const [supplierId, setSupplierId] = useState<string>("");
   const [storeId, setStoreId] = useState<string>("");
   const [document, setDocument] = useState<File | null>(null);
+  const [shippingCost, setShippingCost] = useState<string>("");
+  const [logisticsCost, setLogisticsCost] = useState<string>("");
   
   // Data arrays
   const [stores, setStores] = useState<Store[]>([]);
@@ -189,6 +191,8 @@ type ProductReceiptFormValues = z.infer<typeof formSchema>;
     setSupplierId("");
     setStoreId("");
     setDocument(null);
+    setShippingCost("");
+    setLogisticsCost("");
     setItems([]);
     setProductSearchQuery("");
     setSelectedProductForVariant(null);
@@ -549,6 +553,8 @@ type ProductReceiptFormValues = z.infer<typeof formSchema>;
         document_type: documentType,
         reference_number: referenceNumber.trim(),
         store_id: storeId,
+        shipping_cost: shippingCost ? parseFloat(shippingCost) : 0,
+        logistics_cost: logisticsCost ? parseFloat(logisticsCost) : 0,
         items: items.map(item => ({
           product_id: item.product_id,
           variant_id: item.variant_id,
@@ -568,12 +574,20 @@ type ProductReceiptFormValues = z.infer<typeof formSchema>;
         document: document,
       };
 
-      await createProductReceipt(payload);
+      const result = await createProductReceipt(payload);
 
       toast({
         title: "Success! ✅",
         description: "Product receipt created successfully",
       });
+
+      if (result.pricing_warnings && result.pricing_warnings.length > 0) {
+        toast({
+          title: "Pricing needs review",
+          description: result.pricing_warnings.join(" "),
+          variant: "destructive",
+        });
+      }
 
       onOpenChange(false);
       onSuccess?.();
@@ -666,6 +680,32 @@ type ProductReceiptFormValues = z.infer<typeof formSchema>;
                         ))}
                       </SelectContent>
                     </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="shippingCost">Shipping Cost</Label>
+                    <Input
+                      id="shippingCost"
+                      type="number"
+                      step="0.01"
+                      value={shippingCost}
+                      onChange={(e) => setShippingCost(e.target.value)}
+                      placeholder="0.00"
+                      disabled={isSubmitting}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="logisticsCost">Logistics Cost</Label>
+                    <Input
+                      id="logisticsCost"
+                      type="number"
+                      step="0.01"
+                      value={logisticsCost}
+                      onChange={(e) => setLogisticsCost(e.target.value)}
+                      placeholder="0.00"
+                      disabled={isSubmitting}
+                    />
                   </div>
 
                   <div className="space-y-2">

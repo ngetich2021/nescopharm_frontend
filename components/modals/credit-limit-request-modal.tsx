@@ -17,15 +17,18 @@ interface CreditLimitRequestModalProps {
   onSuccess?: () => void
   customerAccountId: string
   currentCreditLimit: number
+  currentCreditDays?: number | null
 }
 
 interface FormData {
   requested_credit_limit: string
+  requested_credit_days: string
   reason: string
 }
 
 interface ValidationErrors {
   requested_credit_limit?: string
+  requested_credit_days?: string
   reason?: string
 }
 
@@ -34,10 +37,12 @@ export const CreditLimitRequestModal: React.FC<CreditLimitRequestModalProps> = (
   onClose,
   onSuccess,
   customerAccountId,
-  currentCreditLimit
+  currentCreditLimit,
+  currentCreditDays
 }) => {
   const [formData, setFormData] = useState<FormData>({
     requested_credit_limit: '',
+    requested_credit_days: '',
     reason: ''
   })
   const [errors, setErrors] = useState<ValidationErrors>({})
@@ -48,12 +53,19 @@ export const CreditLimitRequestModal: React.FC<CreditLimitRequestModalProps> = (
   const validateForm = (): boolean => {
     const newErrors: ValidationErrors = {}
 
-    if (!formData.requested_credit_limit.trim()) {
-      newErrors.requested_credit_limit = "Requested credit limit is required"
-    } else {
+    if (!formData.requested_credit_limit.trim() && !formData.requested_credit_days.trim()) {
+      newErrors.requested_credit_limit = "Provide a new credit limit and/or a new credit period"
+    }
+    if (formData.requested_credit_limit.trim()) {
       const amount = parseFloat(formData.requested_credit_limit)
       if (isNaN(amount) || amount <= 0) {
         newErrors.requested_credit_limit = "Please enter a valid positive amount"
+      }
+    }
+    if (formData.requested_credit_days.trim()) {
+      const days = parseInt(formData.requested_credit_days, 10)
+      if (isNaN(days) || days < 0) {
+        newErrors.requested_credit_days = "Please enter a valid number of days"
       }
     }
 
@@ -92,7 +104,8 @@ export const CreditLimitRequestModal: React.FC<CreditLimitRequestModalProps> = (
 
     try {
       const requestData: CreditLimitUpdateRequest = {
-        requested_credit_limit: parseFloat(formData.requested_credit_limit),
+        requested_credit_limit: formData.requested_credit_limit.trim() ? parseFloat(formData.requested_credit_limit) : undefined,
+        requested_credit_days: formData.requested_credit_days.trim() ? parseInt(formData.requested_credit_days, 10) : undefined,
         reason: formData.reason,
         justification: formData.reason, // Use reason as justification
         supporting_documents: supportingFiles.map(file => file.name)
@@ -102,12 +115,13 @@ export const CreditLimitRequestModal: React.FC<CreditLimitRequestModalProps> = (
 
       toast({
         title: "Success",
-        description: "Credit limit update request submitted successfully. Awaiting approval.",
+        description: "Credit terms update request submitted successfully. Awaiting GM approval.",
       })
 
       // Reset form
       setFormData({
         requested_credit_limit: '',
+        requested_credit_days: '',
         reason: ''
       })
       setSupportingFiles([])
@@ -129,6 +143,7 @@ export const CreditLimitRequestModal: React.FC<CreditLimitRequestModalProps> = (
   const handleClose = () => {
     setFormData({
       requested_credit_limit: '',
+      requested_credit_days: '',
       reason: ''
     })
     setSupportingFiles([])
@@ -142,44 +157,74 @@ export const CreditLimitRequestModal: React.FC<CreditLimitRequestModalProps> = (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center p-6 border-b">
-          <h2 className="text-xl font-semibold">Request Credit Limit Update</h2>
+          <h2 className="text-xl font-semibold">Request Credit Terms Update</h2>
           <Button variant="ghost" size="sm" onClick={handleClose}>
             <X className="h-4 w-4" />
           </Button>
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
-          {/* Current Credit Limit Display */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-gray-600">Current Credit Limit</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <p className="text-2xl font-bold text-green-600">
-                Ksh {currentCreditLimit.toLocaleString()}
-              </p>
-            </CardContent>
-          </Card>
-
-          {/* Requested Credit Limit */}
-          <div className="space-y-2">
-            <Label htmlFor="requested_credit_limit">
-              Requested Credit Limit (Ksh) <span className="text-red-500">*</span>
-            </Label>
-            <Input
-              id="requested_credit_limit"
-              type="number"
-              step="0.01"
-              min="0"
-              value={formData.requested_credit_limit}
-              onChange={(e) => handleInputChange('requested_credit_limit', e.target.value)}
-              placeholder="Enter requested credit limit (Ksh)"
-              className={errors.requested_credit_limit ? "border-red-500" : ""}
-            />
-            {errors.requested_credit_limit && (
-              <p className="text-sm text-red-500">{errors.requested_credit_limit}</p>
-            )}
+          {/* Current Credit Terms Display */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium text-gray-600">Current Credit Limit</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <p className="text-2xl font-bold text-green-600">
+                  Ksh {currentCreditLimit.toLocaleString()}
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium text-gray-600">Current Credit Period</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <p className="text-2xl font-bold text-green-600">
+                  {currentCreditDays != null ? `${currentCreditDays} days` : "Not set"}
+                </p>
+              </CardContent>
+            </Card>
           </div>
+
+          {/* Requested Credit Limit / Period */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="requested_credit_limit">Requested Credit Limit (Ksh)</Label>
+              <Input
+                id="requested_credit_limit"
+                type="number"
+                step="0.01"
+                min="0"
+                value={formData.requested_credit_limit}
+                onChange={(e) => handleInputChange('requested_credit_limit', e.target.value)}
+                placeholder="Leave blank to keep current"
+                className={errors.requested_credit_limit ? "border-red-500" : ""}
+              />
+              {errors.requested_credit_limit && (
+                <p className="text-sm text-red-500">{errors.requested_credit_limit}</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="requested_credit_days">Requested Credit Period (Days)</Label>
+              <Input
+                id="requested_credit_days"
+                type="number"
+                min="0"
+                value={formData.requested_credit_days}
+                onChange={(e) => handleInputChange('requested_credit_days', e.target.value)}
+                placeholder="e.g. 60"
+                className={errors.requested_credit_days ? "border-red-500" : ""}
+              />
+              {errors.requested_credit_days && (
+                <p className="text-sm text-red-500">{errors.requested_credit_days}</p>
+              )}
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground -mt-2">
+            Provide either or both. Changes only take effect once a GM approves this request.
+          </p>
 
           {/* Reason */}
           <div className="space-y-2">

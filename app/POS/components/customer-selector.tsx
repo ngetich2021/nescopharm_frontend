@@ -9,7 +9,7 @@ import { User, Plus, Search } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/lib/auth-context"
 import type { Customer } from "@/lib/customers"
-import { getCustomers, createCustomer } from "@/lib/customers"
+import { getCustomers, createCustomer, getCustomerDisplayName } from "@/lib/customers"
 import { usePermissions } from "@/hooks/use-permissions"
 
 interface CustomerSelectorProps {
@@ -186,7 +186,7 @@ export function CustomerSelector({ selectedCustomer, onCustomerSelect }: Custome
         <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
           <div className="flex items-center justify-between">
             <div>
-              <p className="font-medium">{selectedCustomer.name}</p>
+              <p className="font-medium">{getCustomerDisplayName(selectedCustomer)}</p>
               {selectedCustomer.email && <p className="text-sm text-gray-600">{selectedCustomer.email}</p>}
               {selectedCustomer.phone && <p className="text-sm text-gray-600">{selectedCustomer.phone}</p>}
             </div>
@@ -235,7 +235,7 @@ export function CustomerSelector({ selectedCustomer, onCustomerSelect }: Custome
                         onClick={() => handleCustomerSelect(customer)}
                       >
                         <div className="text-left">
-                          <p className="font-medium">{customer.name}</p>
+                          <p className="font-medium">{getCustomerDisplayName(customer)}</p>
                           {customer.email && <p className="text-xs text-gray-500">{customer.email}</p>}
                         </div>
                       </Button>

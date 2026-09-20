@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { AlertCircle, FileText, User, Calendar, DollarSign, Package, CheckCircle2, XCircle } from "lucide-react"
 import { formatCurrency } from "@/lib/utils"
+import { getCustomerDisplayName } from "@/lib/customers"
 
 interface ConvertQuoteDialogProps {
   open: boolean
@@ -112,7 +113,7 @@ export function ConvertQuoteDialog({
                 <User className="h-4 w-4 text-gray-500 mt-0.5" />
                 <div>
                   <span className="block text-xs text-gray-500">Customer</span>
-                  <span className="font-medium text-gray-900">{quote.customer?.name || "Unknown"}</span>
+                  <span className="font-medium text-gray-900">{quote.customer ? getCustomerDisplayName(quote.customer) : "Unknown"}</span>
                 </div>
               </div>
 

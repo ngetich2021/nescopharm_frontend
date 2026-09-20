@@ -14,6 +14,7 @@ export interface Role {
   name: string;
   description: string;
   is_active: boolean;
+  is_warehouse_incharge?: boolean;
   created_at: string;
   updated_at: string;
   company_id: string | null;
@@ -105,12 +106,14 @@ export interface CreateRolePayload {
   description: string;
   company_id: string;
   permission_ids: string[];
+  is_warehouse_incharge?: boolean;
 }
 
 export interface UpdateRolePayload {
   name?: string;
   description?: string;
   is_active?: boolean;
+  is_warehouse_incharge?: boolean;
   permissions?: Record<string, boolean>;
 }
 

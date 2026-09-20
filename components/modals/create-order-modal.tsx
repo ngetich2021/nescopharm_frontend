@@ -13,13 +13,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
-import { Plus, Search, ShoppingCart, Trash2, X } from "lucide-react"
+import { Plus, Search, ShoppingCart, Trash2, X, Wallet, CreditCard as CreditCardIcon } from "lucide-react"
+import { getCreditOverage, coversOverage } from "@/lib/credit-overage"
+import { createPayment } from "@/lib/payments"
+import { CreditOveragePrompt } from "@/components/credit-overage-prompt"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import apiCall from "@/lib/api"
 import { Product, ProductVariant, getProducts } from "@/lib/products"
-import { getCustomers, Customer as LibCustomer, createCustomer } from "@/lib/customers"
+import { getCustomers, Customer as LibCustomer, createCustomer, fetchCustomerCreditTerms, CustomerCreditTerms, getCustomerDisplayName } from "@/lib/customers"
 import { formatPackagingForDisplay } from "@/lib/packaging-utils"
+import { fetchSalesReps, SalesRep } from "@/lib/invoices"
 
 type Customer = LibCustomer
 
@@ -77,8 +81,37 @@ export function CreateOrderModal({
   const [trackingNumber, setTrackingNumber] = useState("")
   const [status, setStatus] = useState("Pending")
   const [paymentStatus, setPaymentStatus] = useState("Unpaid")
+  const [salesReps, setSalesReps] = useState<SalesRep[]>([])
+  const [salesRepId, setSalesRepId] = useState<string>("")
   const [amountPaid, setAmountPaid] = useState(0)
   const [discount, setDiscount] = useState(0)
+  const [paymentOption, setPaymentOption] = useState<'instant' | 'credit'>('instant')
+  const [creditTerms, setCreditTerms] = useState<CustomerCreditTerms | null>(null)
+  const [isLoadingCreditTerms, setIsLoadingCreditTerms] = useState(false)
+  const [downPaymentAmount, setDownPaymentAmount] = useState(0)
+  const [downPaymentMethod, setDownPaymentMethod] = useState("")
+  const [downPaymentTransactionRef, setDownPaymentTransactionRef] = useState("")
+
+  // Default the payment option to whatever this customer is registered as (cash
+  // vs GM-approved credit terms), but the user can still switch it for this order.
+  useEffect(() => {
+    const customerId = selectedCustomer?.id
+    setDownPaymentAmount(0)
+    setDownPaymentMethod("")
+    setDownPaymentTransactionRef("")
+    if (!customerId) {
+      setCreditTerms(null)
+      return
+    }
+    setIsLoadingCreditTerms(true)
+    fetchCustomerCreditTerms(customerId)
+      .then((terms) => {
+        setCreditTerms(terms)
+        setPaymentOption(terms.payment_method === 'credit' ? 'credit' : 'instant')
+      })
+      .catch(() => setCreditTerms(null))
+      .finally(() => setIsLoadingCreditTerms(false))
+  }, [selectedCustomer?.id])
 
   // Page size used when prefetching products
   const PRODUCTS_PAGE_SIZE = 50
@@ -122,6 +155,12 @@ export function CreateOrderModal({
       setProductsLoadingAll(false)
     }
   }
+
+  useEffect(() => {
+    if (open) {
+      fetchSalesReps().then(setSalesReps).catch(() => setSalesReps([]))
+    }
+  }, [open])
 
   // When the sheet opens, start loading products: initial page then prefetch rest
   useEffect(() => {
@@ -378,6 +417,10 @@ export function CreateOrderModal({
     return subtotal + tax - discountAmount
   }
 
+  const creditOverage = paymentOption === 'credit' && creditTerms?.credit_days
+    ? getCreditOverage(calculateTotal(), creditTerms.available_credit)
+    : 0
+
   const handleCreateOrder = async () => {
     // Validation
     if (!selectedCustomer && activeTab === "existing") {
@@ -392,6 +435,16 @@ export function CreateOrderModal({
 
     if (orderItems.length === 0) {
       toast.error("Please add at least one product")
+      return
+    }
+
+    if (paymentOption === 'credit' && !creditTerms?.credit_days) {
+      toast.error("This customer has no GM-approved credit terms. Get credit terms approved, or switch to instant payment.")
+      return
+    }
+
+    if (creditOverage > 0 && (!coversOverage(downPaymentAmount, creditOverage) || !downPaymentMethod)) {
+      toast.error(`This exceeds available credit by KES ${creditOverage.toLocaleString()}. Enter how that amount will be paid now to proceed.`)
       return
     }
 
@@ -422,9 +475,12 @@ export function CreateOrderModal({
       // TODO: Add UI for delivery_location_id, delivery_person_id, estimated_delivery if needed
       const payload = {
         customer_id: customerId,
+        sales_rep_id: salesRepId || undefined,
         store_id: storeId,
         status: status.toLowerCase(),
         payment_status: paymentStatus.toLowerCase(),
+        payment_option: paymentOption,
+        amount_paid: amountPaid || undefined,
         // delivery_location_id: ..., // TODO: Add from UI
         // delivery_person_id: ...,
         // estimated_delivery: ...,
@@ -441,7 +497,21 @@ export function CreateOrderModal({
           ...(item.variant_id ? { variant_id: item.variant_id } : {}),
         })),
       }
-      await apiCall("/orders", "POST", payload)
+      const orderResponse = await apiCall<{ order: { id: string } }>("/orders", "POST", payload)
+
+      // Record a real payment against the order for the portion covering the
+      // credit overage, so it shows up in payment history rather than just
+      // being a number written into the order's amount_paid field.
+      if (creditOverage > 0 && orderResponse?.order?.id) {
+        await createPayment({
+          order_id: orderResponse.order.id,
+          payment_method: downPaymentMethod,
+          amount_paid: downPaymentAmount,
+          transaction_id: downPaymentTransactionRef || undefined,
+          status: 'completed',
+        })
+      }
+
       toast.success("Order created successfully!", { position: "bottom-left" })
       setOpen(false)
       resetForm()
@@ -519,8 +589,14 @@ export function CreateOrderModal({
     setTrackingNumber("")
     setStatus("Pending")
     setPaymentStatus("Unpaid")
+    setPaymentOption("instant")
+    setCreditTerms(null)
     setAmountPaid(0)
+    setDownPaymentAmount(0)
+    setDownPaymentMethod("")
+    setDownPaymentTransactionRef("")
     setDiscount(0)
+    setSalesRepId("")
   }
 
   return (
@@ -579,10 +655,10 @@ export function CreateOrderModal({
                             onClick={() => handleSelectCustomer(customer)}
                           >
                             <div className="font-medium">
-                              {customer.name}
-                              {customer.customer_type !== 'individual' && (customer.company || customer.business_name) && (
+                              {getCustomerDisplayName(customer)}
+                              {customer.customer_type === 'company' && customer.name && (
                                 <span className="ml-2 text-xs text-gray-400 font-normal">
-                                  ({customer.company || customer.business_name})
+                                  (Contact: {customer.name})
                                 </span>
                               )}
                             </div>
@@ -598,7 +674,7 @@ export function CreateOrderModal({
                     <div className="mt-4 p-4 border rounded-md bg-gray-50">
                       <div className="flex justify-between iteppms-start">
                         <div>
-                          <div className="font-medium">{selectedCustomer.name}</div>
+                          <div className="font-medium">{getCustomerDisplayName(selectedCustomer)}</div>
                           <div className="text-sm text-gray-500">{selectedCustomer.email}</div>
                           <div className="text-sm text-gray-500">{selectedCustomer.phone}</div>
                           <div className="text-sm text-gray-500">{selectedCustomer.address}</div>
@@ -783,11 +859,11 @@ export function CreateOrderModal({
               </div>
             ) : (
               <div className="space-y-4">
-                <div className="border rounded-md overflow-hidden">
+                <div className="border rounded-md overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-full sm:w-auto">
                           Product
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -819,8 +895,8 @@ export function CreateOrderModal({
                         const itemKey = getOrderItemKey(item)
                         return (
                           <tr key={index}>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <div className="text-sm font-medium text-gray-900">{item.product_name}</div>
+                            <td className="px-4 py-3 max-w-[240px]">
+                              <div className="text-sm font-medium text-gray-900 break-words">{item.product_name}</div>
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               <Input
@@ -943,6 +1019,73 @@ export function CreateOrderModal({
             )}
           </div>
 
+          {/* How is this being paid? */}
+          <div className="space-y-3 rounded-lg border p-4">
+            <Label>How is this being paid? *</Label>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setPaymentOption('instant')}
+                className={`flex items-center gap-2 rounded-md border p-3 text-sm font-medium transition-colors ${
+                  paymentOption === 'instant'
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                <Wallet className="h-4 w-4" />
+                Cash / Instant
+              </button>
+              <button
+                type="button"
+                onClick={() => setPaymentOption('credit')}
+                className={`flex items-center gap-2 rounded-md border p-3 text-sm font-medium transition-colors ${
+                  paymentOption === 'credit'
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                <CreditCardIcon className="h-4 w-4" />
+                Credit
+              </button>
+            </div>
+
+            {paymentOption === 'credit' && (
+              isLoadingCreditTerms ? (
+                <p className="text-sm text-muted-foreground">Loading customer's credit terms...</p>
+              ) : !selectedCustomer ? (
+                <p className="text-sm text-muted-foreground">Select a customer to see their credit terms.</p>
+              ) : creditTerms?.credit_days ? (
+                <div className="rounded-md bg-purple-50 border border-purple-200 p-3 text-sm">
+                  <p className="font-medium text-purple-900">
+                    Approved terms: Net {creditTerms.credit_days} ({creditTerms.credit_days} days)
+                  </p>
+                  {creditTerms.available_credit != null && (
+                    <p className="text-purple-700">Available credit: KES {Number(creditTerms.available_credit).toLocaleString()}</p>
+                  )}
+                  {creditTerms.has_pending_change && (
+                    <p className="text-amber-700 mt-1">Note: a terms change is pending GM approval and not yet in effect.</p>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-md bg-yellow-50 border border-yellow-200 p-3 text-sm text-yellow-800">
+                  No GM-approved credit terms on file for this customer. Get credit terms approved, or
+                  switch to instant payment, before this order can be created.
+                </div>
+              )
+            )}
+            {creditOverage > 0 && (
+              <CreditOveragePrompt
+                overage={creditOverage}
+                downPaymentAmount={downPaymentAmount}
+                onDownPaymentAmountChange={setDownPaymentAmount}
+                downPaymentMethod={downPaymentMethod}
+                onDownPaymentMethodChange={setDownPaymentMethod}
+                downPaymentTransactionRef={downPaymentTransactionRef}
+                onDownPaymentTransactionRefChange={setDownPaymentTransactionRef}
+              />
+            )}
+          </div>
+
           {/* Order Details */}
           <div className="space-y-4">
             <h3 className="text-lg font-medium">Order Details</h3>
@@ -974,6 +1117,23 @@ export function CreateOrderModal({
                     <SelectItem value="Partially Paid">Partially Paid</SelectItem>
                     <SelectItem value="Paid">Paid</SelectItem>
                     <SelectItem value="Refunded">Refunded</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="sales-rep">Sales Rep</Label>
+                <Select value={salesRepId || "none"} onValueChange={(v) => setSalesRepId(v === "none" ? "" : v)}>
+                  <SelectTrigger id="sales-rep">
+                    <SelectValue placeholder="Unassigned" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Unassigned</SelectItem>
+                    {salesReps.map((rep) => (
+                      <SelectItem key={rep.id} value={rep.id}>
+                        {rep.full_name || `${rep.first_name} ${rep.last_name}`}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -1026,7 +1186,14 @@ export function CreateOrderModal({
             >
               Cancel
             </Button>
-            <Button onClick={handleCreateOrder} disabled={loading}>
+            <Button
+              onClick={handleCreateOrder}
+              disabled={
+                loading ||
+                (paymentOption === 'credit' && !creditTerms?.credit_days) ||
+                (creditOverage > 0 && (!coversOverage(downPaymentAmount, creditOverage) || !downPaymentMethod))
+              }
+            >
               {loading && <Plus className="mr-2 h-4 w-4 animate-spin" />}
               Create Order
             </Button>

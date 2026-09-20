@@ -15,7 +15,7 @@ import { useForm, useFieldArray, type SubmitHandler } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { createQuote } from "@/lib/quotes"
-import { getCustomers, createCustomer } from "@/lib/customers"
+import { getCustomers, createCustomer, getCustomerDisplayName } from "@/lib/customers"
 import { getProducts } from "@/lib/products"
 import { useToast } from "@/hooks/use-toast"
 import { formatCurrency } from "@/lib/utils"
@@ -53,6 +53,8 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
   const [products, setProducts] = useState<any[]>([])
   const [isSaving, setIsSaving] = useState(false)
   const [productSearchTerm, setProductSearchTerm] = useState("")
+  const [productSearchResults, setProductSearchResults] = useState<any[] | null>(null)
+  const [isSearchingProducts, setIsSearchingProducts] = useState(false)
   const [showProductSearch, setShowProductSearch] = useState<number | null>(null)
   const [customerSearchTerm, setCustomerSearchTerm] = useState("")
   const [showCustomerSearch, setShowCustomerSearch] = useState(false)
@@ -104,7 +106,7 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
 
   const loadProducts = async () => {
     try {
-      const productsData = await getProducts()
+      const productsData = await getProducts(1, 200)
       setProducts(productsData?.data || [])
     } catch (error: any) {
       // Silently handle product loading errors
@@ -117,11 +119,38 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
     customer.phone?.toLowerCase().includes(customerSearchTerm.toLowerCase())
   )
 
-  const filteredProducts = products.filter(product =>
-    product.name?.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
-    product.sku?.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
-    product.description?.toLowerCase().includes(productSearchTerm.toLowerCase())
-  )
+  // Search products server-side once the query is long enough, so results aren't
+  // limited to whatever happened to load in the initial page of products.
+  useEffect(() => {
+    if (!open) return
+    const term = productSearchTerm.trim()
+    if (term.length < 2) {
+      setProductSearchResults(null)
+      return
+    }
+    setIsSearchingProducts(true)
+    const timer = setTimeout(async () => {
+      try {
+        const { data } = await getProducts(1, 50, { search: term })
+        setProductSearchResults(data || [])
+      } catch (error) {
+        console.error('Product search failed:', error)
+        setProductSearchResults([])
+      } finally {
+        setIsSearchingProducts(false)
+      }
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [productSearchTerm, open])
+
+  // Below the search threshold, fall back to filtering the initially loaded page.
+  const filteredProducts = productSearchResults !== null
+    ? productSearchResults
+    : products.filter(product =>
+        product.name?.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
+        product.sku?.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
+        product.description?.toLowerCase().includes(productSearchTerm.toLowerCase())
+      )
 
   const addLineItem = () => {
     append({
@@ -354,7 +383,7 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
                             className="w-full justify-between"
                           >
                             {form.watch('customer_id') 
-                              ? customers.find(customer => customer.id === form.watch('customer_id'))?.name
+                              ? getCustomerDisplayName(customers.find(customer => customer.id === form.watch('customer_id')) ?? { name: "", business_name: null, customer_type: null })
                               : "Select or search customer"}
                             <Search className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                           </Button>
@@ -396,7 +425,7 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
                                       setCustomerSearchTerm("")
                                     }}
                                   >
-                                    <span className="font-medium text-sm">{customer.name}</span>
+                                    <span className="font-medium text-sm">{getCustomerDisplayName(customer)}</span>
                                     <div className="text-xs text-gray-500">
                                       {customer.email && <div>{customer.email}</div>}
                                       {customer.phone && <div>{customer.phone}</div>}
@@ -621,7 +650,9 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
                                 </Button>
                               </div>
                               <div className="max-h-60 overflow-y-auto">
-                                {filteredProducts.length === 0 ? (
+                                {isSearchingProducts ? (
+                                  <div className="p-3 text-sm text-gray-500 text-center">Searching...</div>
+                                ) : filteredProducts.length === 0 ? (
                                   <div className="p-3 text-sm text-gray-500 text-center">
                                     {productSearchTerm ? 'No products found' : 'No products available'}
                                   </div>

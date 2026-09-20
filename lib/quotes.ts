@@ -5,6 +5,12 @@ export interface Quote {
   id: string
   quote_number: string
   customer_id: string
+  submitted_by_id?: string | null
+  submitted_at?: string | null
+  submittedBy?: {
+    id: string
+    name: string
+  } | null
   total_amount: string
   status: string
   company_id: string

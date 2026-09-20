@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger 
 } from "@/components/ui/dropdown-menu"
 import { Edit, ShoppingCart, FileText, Calendar, User, MapPin, Phone, Mail, ArrowLeft, Send, ChevronDown, MessageCircle } from "lucide-react"
+import { getCustomerDisplayName } from "@/lib/customers"
 import { formatCurrency } from "@/lib/utils"
 import { Quote } from "@/lib/quotes"
 import { PermissionGuard } from "@/components/PermissionGuard"
@@ -197,7 +198,7 @@ export function ViewQuoteSheet({
                 <CardContent className="space-y-3">
                   <div className="flex justify-between">
                     <span className="text-sm font-medium text-gray-600">Name:</span>
-                    <span className="text-sm font-semibold">{quote.customer.name}</span>
+                    <span className="text-sm font-semibold">{getCustomerDisplayName(quote.customer)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm font-medium text-gray-600">Customer #:</span>

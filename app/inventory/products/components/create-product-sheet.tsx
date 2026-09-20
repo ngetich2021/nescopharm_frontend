@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { Loader2, Plus, Image as ImageIcon, Package, Trash2, X, Check, ChevronsUpDown } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-import { createProduct, type PackagingUnit } from "@/lib/products"
+import { createProduct, fileToDataUrl, type PackagingUnit, type PriceTierInput } from "@/lib/products"
 import { getProductCategories } from "@/lib/product-categories"
 import { getSuppliers } from "@/lib/suppliers"
 import { getStores } from "@/lib/stores"
@@ -70,6 +70,9 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
     tags: "",
     price: "",
     cost: "",
+    shipping_cost: "",
+    logistics_cost: "",
+    margin_amount: "",
     last_price: "",
     sku: "",
     barcode: "",
@@ -170,6 +173,31 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
     }
   ])
   
+  // Price tiers (e.g. "Hospital Price", "Wholesale Price") - dynamic, user-named
+  const [priceTiers, setPriceTiers] = useState<PriceTierInput[]>([])
+
+  const addPriceTier = () => {
+    setPriceTiers(prev => [...prev, { tier_name: "", price: 0 }])
+  }
+
+  const updatePriceTier = (index: number, field: "tier_name" | "price", value: string) => {
+    setPriceTiers(prev => prev.map((tier, i) =>
+      i === index ? { ...tier, [field]: field === "price" ? parseFloat(value) || 0 : value } : tier
+    ))
+  }
+
+  const removePriceTier = (index: number) => {
+    setPriceTiers(prev => prev.filter((_, i) => i !== index))
+  }
+
+  // Minimum valid price = unit cost + shipping cost + logistics cost + margin. No price
+  // (selling price, last price, or any tier price) may be at or below this.
+  const minimumValidPrice =
+    (parseFloat(formData.cost) || 0) +
+    (parseFloat(formData.shipping_cost) || 0) +
+    (parseFloat(formData.logistics_cost) || 0) +
+    (parseFloat(formData.margin_amount) || 0)
+
   // Dropdown data
   const [categories, setCategories] = useState<ProductCategory[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
@@ -448,27 +476,25 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
     )
   }
   
-  const handleVariantImageUpload = (variantId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleVariantImageUpload = async (variantId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (!files || files.length === 0) return
-    
-    // In a real implementation, you would upload these files to a server
-    // For now, we'll just create mock URLs
-    const newImages = Array.from(files).map((file, index) => 
-      URL.createObjectURL(file)
-    )
-    
-    setVariants(prev => 
-      prev.map(variant => 
-        variant.id === variantId 
-          ? { 
-              ...variant, 
-              images: [...variant.images, ...newImages] 
-            } 
+
+    // Read files as base64 data URIs - the backend decodes and persists these
+    // (it rejects blob: URLs, which are only ever valid in this browser tab).
+    const newImages = await Promise.all(Array.from(files).map((file) => fileToDataUrl(file)))
+
+    setVariants(prev =>
+      prev.map(variant =>
+        variant.id === variantId
+          ? {
+              ...variant,
+              images: [...variant.images, ...newImages]
+            }
           : variant
       )
     )
-    
+
     // Reset the file input
     e.target.value = ""
   }
@@ -493,21 +519,19 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
     }
   }
   
-  const handleProductImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleProductImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (!files || files.length === 0) return
-    
-    // In a real implementation, you would upload these files to a server
-    // For now, we'll just create mock URLs
-    const newImages = Array.from(files).map((file, index) => 
-      URL.createObjectURL(file)
-    )
-    
+
+    // Read files as base64 data URIs - the backend decodes and persists these
+    // (it rejects blob: URLs, which are only ever valid in this browser tab).
+    const newImages = await Promise.all(Array.from(files).map((file) => fileToDataUrl(file)))
+
     setFormData(prev => ({
       ...prev,
       images: [...prev.images, ...newImages]
     }))
-    
+
     // Reset the file input
     e.target.value = ""
   }
@@ -642,6 +666,10 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
           : [],
         price: parseFloat(formData.price) || 0,
         cost: parseFloat(formData.cost) || 0,
+        shipping_cost: parseFloat(formData.shipping_cost) || 0,
+        logistics_cost: parseFloat(formData.logistics_cost) || 0,
+        margin_amount: parseFloat(formData.margin_amount) || 0,
+        price_tiers: priceTiers.filter(t => t.tier_name.trim()),
         last_price: formData.last_price ? parseFloat(formData.last_price) : undefined,
         sku: formData.sku.trim() || undefined,
         barcode: formData.barcode.trim() || undefined,
@@ -757,8 +785,18 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
         }
       }
       
+      const pricesToCheck: { label: string; value: number }[] = [
+        { label: "Selling price", value: productData.price },
+        ...(productData.last_price !== undefined ? [{ label: "Last price", value: productData.last_price }] : []),
+        ...priceTiers.filter(t => t.tier_name.trim()).map(t => ({ label: t.tier_name, value: t.price })),
+      ]
+      const underMinimum = pricesToCheck.filter(p => p.value <= minimumValidPrice)
+      if (underMinimum.length > 0) {
+        throw new Error(`${underMinimum.map(p => p.label).join(", ")} must be greater than the minimum valid price of KES ${minimumValidPrice.toFixed(2)} (cost + shipping + logistics + margin).`)
+      }
+
       const result = await createProduct(productData)
-      
+
       // Add debug logging
       console.log('Product creation result:', result)
       
@@ -779,6 +817,9 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
           tags: "",
           price: "",
           cost: "",
+          shipping_cost: "",
+          logistics_cost: "",
+          margin_amount: "",
           last_price: "",
           sku: "",
           barcode: "",
@@ -805,7 +846,8 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
           taxRate: "",
           hsCode: ""
         })
-        
+        setPriceTiers([])
+
         setPackagingUnits([
           {
             unit_name: "Piece",
@@ -1088,7 +1130,88 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
                     </Select>
                   </div>
                 </div>
-                
+
+                {/* Landed cost + margin */}
+                <Separator />
+                <div className="space-y-4">
+                  <h4 className="font-medium text-sm">Landed Cost &amp; Margin</h4>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="shipping_cost">Shipping Cost</Label>
+                      <Input
+                        id="shipping_cost"
+                        type="number"
+                        step="0.01"
+                        value={formData.shipping_cost}
+                        onChange={(e) => handleInputChange("shipping_cost", e.target.value)}
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="logistics_cost">Logistics Cost</Label>
+                      <Input
+                        id="logistics_cost"
+                        type="number"
+                        step="0.01"
+                        value={formData.logistics_cost}
+                        onChange={(e) => handleInputChange("logistics_cost", e.target.value)}
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="margin_amount">Margin (KES)</Label>
+                      <Input
+                        id="margin_amount"
+                        type="number"
+                        step="0.01"
+                        value={formData.margin_amount}
+                        onChange={(e) => handleInputChange("margin_amount", e.target.value)}
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Minimum valid price: <span className="font-medium text-foreground">KES {minimumValidPrice.toFixed(2)}</span> (cost + shipping + logistics + margin). Selling price, last price, and every price tier below must be greater than this.
+                  </p>
+                </div>
+
+                {/* Price tiers */}
+                <Separator />
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-medium text-sm">Client Price Tiers</h4>
+                    <Button type="button" variant="outline" size="sm" onClick={addPriceTier}>
+                      <Plus className="h-4 w-4 mr-1" />
+                      Add Price
+                    </Button>
+                  </div>
+                  {priceTiers.length > 0 && (
+                    <div className="space-y-2">
+                      {priceTiers.map((tier, index) => (
+                        <div key={index} className="flex gap-2 items-center">
+                          <Input
+                            value={tier.tier_name}
+                            onChange={(e) => updatePriceTier(index, "tier_name", e.target.value)}
+                            placeholder="e.g. Hospital Price"
+                            className="flex-1"
+                          />
+                          <Input
+                            type="number"
+                            step="0.01"
+                            value={tier.price || ""}
+                            onChange={(e) => updatePriceTier(index, "price", e.target.value)}
+                            placeholder="0.00"
+                            className="w-32"
+                          />
+                          <Button type="button" variant="outline" size="sm" onClick={() => removePriceTier(index)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 {/* Tax Settings */}
                 <Separator />
                 <div className="space-y-4">

@@ -16,6 +16,7 @@ import apiCall from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
 import { createDebt, updateDebtByOrderId, getDebtForOrder } from "@/lib/debts"
 import { getCustomers, createCustomer } from "@/lib/customers"
+import { createQuote } from "@/lib/quotes"
 import { usePermissions } from "@/hooks/use-permissions"
 
 // Add a local placeholder for sendMpesaStkPush
@@ -62,7 +63,12 @@ export function PaymentModal({ isOpen, onClose, cartItems, customer, onPaymentCo
   const [debtCustomer, setDebtCustomer] = useState({ name: "", phone: "", email: "" })
   const [expectedPaymentDate, setExpectedPaymentDate] = useState<string>("")
   const router = useRouter()
-  const { companyId } = useAuth();
+  const { companyId, user } = useAuth();
+  // Sales Reps don't take payment or create orders in POS - their "sale" is
+  // captured as a Quote and routed to whoever can create quotes for review,
+  // rather than pushing them through the full order/payment/debt machinery.
+  const isRepSubmission = !existingOrderId && !!user?.role?.is_sales_rep
+  const [quoteSubmitted, setQuoteSubmitted] = useState<{ quote_number: string } | null>(null)
   const [customerList, setCustomerList] = useState<Customer[]>([])
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("")
   const [newCustomer, setNewCustomer] = useState<{ name: string; phone: string; email: string }>({ name: "", phone: "", email: "" })
@@ -117,6 +123,7 @@ export function PaymentModal({ isOpen, onClose, cartItems, customer, onPaymentCo
       setCompleteAsDebt(false)
       setDebtCustomer({ name: "", phone: "", email: "" })
       setExpectedPaymentDate("")
+      setQuoteSubmitted(null)
     }
   }, [isOpen])
 
@@ -173,6 +180,44 @@ export function PaymentModal({ isOpen, onClose, cartItems, customer, onPaymentCo
     setMpesaPhone("")
     setMpesaTxnCode("")
     setCardTxnCode("")
+  }
+
+  const handleSubmitQuote = async () => {
+    if (cartItems.length === 0) {
+      toast({ title: "Cart is empty", variant: "destructive" })
+      return
+    }
+    if (!customer?.id || customer.id === "walk-in") {
+      toast({ title: "Select a customer", description: "A customer is required to submit a quote.", variant: "destructive" })
+      return
+    }
+    setIsProcessing(true)
+    try {
+      const items = cartItems.map((item) => {
+        const quoteItem: any = {
+          product_id: item.productId,
+          quantity: item.quantity,
+          unit_price: String(item.price),
+        }
+        if (item.variantId) quoteItem.variant_id = item.variantId
+        return quoteItem
+      })
+      const quote = await createQuote({
+        customer_id: customer.id,
+        items,
+        currency: "KES",
+        notes: "Submitted from POS by sales rep - pending review.",
+      })
+      setQuoteSubmitted({ quote_number: quote.quote_number })
+      toast({
+        title: "Quote submitted for review",
+        description: `Quote ${quote.quote_number} sent for review. It becomes a full order once reviewed and edited.`,
+      })
+    } catch (error: any) {
+      toast({ title: "Quote submission failed", description: error.message || String(error), variant: "destructive" })
+    } finally {
+      setIsProcessing(false)
+    }
   }
 
   const handleCompleteOrder = async () => {
@@ -373,6 +418,8 @@ export function PaymentModal({ isOpen, onClose, cartItems, customer, onPaymentCo
   const handleClose = () => {
     if (orderData) {
       onPaymentComplete(orderData.payment)
+    } else if (quoteSubmitted) {
+      onPaymentComplete({ isQuote: true, ...quoteSubmitted })
     }
     setAmountReceived("")
     setPaymentMethod("cash")
@@ -385,6 +432,7 @@ export function PaymentModal({ isOpen, onClose, cartItems, customer, onPaymentCo
     setCompleteAsDebt(false)
     setDebtCustomer({ name: "", phone: "", email: "" })
     setExpectedPaymentDate("")
+    setQuoteSubmitted(null)
     onClose()
   }
 
@@ -437,6 +485,33 @@ export function PaymentModal({ isOpen, onClose, cartItems, customer, onPaymentCo
     } finally {
       setCreatingCustomer(false)
     }
+  }
+
+  if (quoteSubmitted) {
+    return (
+      <Dialog open={isOpen} onOpenChange={handleClose}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Receipt className="h-5 w-5" />
+              Quote Submitted
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="text-center p-4 bg-blue-50 rounded-lg">
+              <div className="text-blue-700 font-semibold text-lg">Sent for review!</div>
+              <div className="text-sm text-blue-700">Quote {quoteSubmitted.quote_number}</div>
+              <div className="text-xs text-blue-600 mt-2">
+                This will become a full order once someone authorized reviews and edits it.
+              </div>
+            </div>
+            <Button onClick={handleClose} className="w-full">
+              Done
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
   }
 
   if (showReceipt && orderData) {
@@ -522,6 +597,20 @@ export function PaymentModal({ isOpen, onClose, cartItems, customer, onPaymentCo
           </div>
         </div>
 
+        {/* Sales Reps don't take payment in POS - their sale becomes a Quote
+            for someone authorized to create quotes to review and finalize. */}
+        {isRepSubmission && (
+          <div className="px-8 pb-2">
+            <div className="rounded-lg bg-blue-50 border border-blue-200 p-4 text-sm text-blue-800">
+              As a Sales Rep, this won't be completed as an order here. It will be submitted as a
+              quote for review by someone authorized to create quotes - it becomes a full order once
+              they've reviewed and edited it.
+            </div>
+          </div>
+        )}
+
+        {!isRepSubmission && (
+        <>
         {/* Step 2: Payment Method Selection (now includes Debt) */}
         <div className="px-8 pb-2">
           <Label className="mb-1 block">Payment Method</Label>
@@ -686,29 +775,46 @@ export function PaymentModal({ isOpen, onClose, cartItems, customer, onPaymentCo
             </div>
           </div>
         </div>
+        </>
+        )}
 
         {/* Sticky Footer for Complete Order */}
         <div className="fixed bottom-0 left-0 right-0 z-50 bg-white border-t px-8 py-4 flex flex-col gap-2 max-w-xl mx-auto">
           <Button
-            onClick={handleCompleteOrder}
+            onClick={isRepSubmission ? handleSubmitQuote : handleCompleteOrder}
             className="w-full text-lg font-bold"
             disabled={
               isProcessing ||
-              (paymentMethod === "debt"
+              (isRepSubmission
+                ? !customer?.id || customer.id === "walk-in"
+                : paymentMethod === "debt"
                 ? !(selectedCustomerId || customer?.id) || !expectedPaymentDate
                 : totalPaid < total)
             }
             type="button"
           >
-            {isProcessing ? "Processing..." : paymentMethod === "debt" ? "Record Debt" : "Complete Order"}
+            {isProcessing
+              ? "Processing..."
+              : isRepSubmission
+              ? "Submit as Quote"
+              : paymentMethod === "debt"
+              ? "Record Debt"
+              : "Complete Order"}
           </Button>
-          {paymentMethod === "debt" && (!selectedCustomerId && !customer?.id || !expectedPaymentDate) && (
+          {isRepSubmission && (!customer?.id || customer.id === "walk-in") && (
+            <div className="text-center text-xs text-red-500 mt-1">
+              Please select a customer to submit this quote.
+            </div>
+          )}
+          {!isRepSubmission && paymentMethod === "debt" && (!selectedCustomerId && !customer?.id || !expectedPaymentDate) && (
             <div className="text-center text-xs text-red-500 mt-1">
               Please select or create a customer and set the expected payment date to record a debt.
             </div>
           )}
           <div className="text-center text-xs text-gray-400">
-            {paymentMethod === "debt"
+            {isRepSubmission
+              ? "This will be sent as a quote for review, not completed as an order."
+              : paymentMethod === "debt"
               ? "Order will be saved as a debt. Customer will be expected to pay by the selected date."
               : "Order will be completed and marked as paid."}
           </div>

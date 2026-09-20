@@ -124,6 +124,8 @@ export function EditProductReceiptModal({
   const [supplierId, setSupplierId] = useState<string>("");
   const [storeId, setStoreId] = useState<string>("");
   const [document, setDocument] = useState<File | null>(null);
+  const [shippingCost, setShippingCost] = useState<string>("");
+  const [logisticsCost, setLogisticsCost] = useState<string>("");
   const [items, setItems] = useState<ProductReceiptItem[]>([]);
   
   // Data arrays
@@ -179,6 +181,8 @@ export function EditProductReceiptModal({
     setSupplierId("");
     setStoreId("");
     setDocument(null);
+    setShippingCost("");
+    setLogisticsCost("");
     setItems([]);
     setProductSearchQuery("");
     setSelectedProductForVariant(null);
@@ -200,6 +204,8 @@ export function EditProductReceiptModal({
       setDocumentType(receiptData.document_type || "");
       setSupplierId(receiptData.supplier_id || "");
       setStoreId(receiptData.store_id || "");
+      setShippingCost(receiptData.shipping_cost !== undefined && receiptData.shipping_cost !== null ? String(receiptData.shipping_cost) : "");
+      setLogisticsCost(receiptData.logistics_cost !== undefined && receiptData.logistics_cost !== null ? String(receiptData.logistics_cost) : "");
       
       // Convert existing items to the correct format
       const convertedItems: ProductReceiptItem[] = receiptData.product_receipt_items?.map((item, index) => ({
@@ -498,6 +504,8 @@ export function EditProductReceiptModal({
         document_type: data.document_type,
         reference_number: data.reference_number.trim(),
         store_id: data.store_id,
+        shipping_cost: shippingCost ? parseFloat(shippingCost) : 0,
+        logistics_cost: logisticsCost ? parseFloat(logisticsCost) : 0,
         items: items.map(item => ({
           product_id: item.product_id,
           variant_id: item.variant_id,
@@ -509,12 +517,20 @@ export function EditProductReceiptModal({
         document: document,
       };
 
-      await updateProductReceiptFull(productReceipt.id, payload);
+      const result = await updateProductReceiptFull(productReceipt.id, payload);
 
       toast({
         title: "Success! ✅",
         description: "Product receipt updated successfully",
       });
+
+      if (result.pricing_warnings && result.pricing_warnings.length > 0) {
+        toast({
+          title: "Pricing needs review",
+          description: result.pricing_warnings.join(" "),
+          variant: "destructive",
+        });
+      }
 
       onOpenChange(false);
       onSuccess();
@@ -592,6 +608,32 @@ export function EditProductReceiptModal({
                         ))}
                       </SelectContent>
                     </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="shippingCost">Shipping Cost</Label>
+                    <Input
+                      id="shippingCost"
+                      type="number"
+                      step="0.01"
+                      value={shippingCost}
+                      onChange={(e) => setShippingCost(e.target.value)}
+                      placeholder="0.00"
+                      disabled={isSubmitting}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="logisticsCost">Logistics Cost</Label>
+                    <Input
+                      id="logisticsCost"
+                      type="number"
+                      step="0.01"
+                      value={logisticsCost}
+                      onChange={(e) => setLogisticsCost(e.target.value)}
+                      placeholder="0.00"
+                      disabled={isSubmitting}
+                    />
                   </div>
 
                   <div className="space-y-2">

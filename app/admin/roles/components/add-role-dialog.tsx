@@ -45,7 +45,8 @@ export function AddRoleDialog({ open, onOpenChange, onSuccess, companies }: AddR
     name: "",
     description: "",
     company_id: "",
-    permission_ids: [] as string[]
+    permission_ids: [] as string[],
+    is_warehouse_incharge: false,
   })
   const [permissions, setPermissions] = useState<Permission[]>([])
   const [categories, setCategories] = useState<string[]>([])
@@ -93,7 +94,8 @@ export function AddRoleDialog({ open, onOpenChange, onSuccess, companies }: AddR
       name: "",
       description: "",
       company_id: "",
-      permission_ids: []
+      permission_ids: [],
+      is_warehouse_incharge: false,
     })
   }
 
@@ -164,7 +166,8 @@ export function AddRoleDialog({ open, onOpenChange, onSuccess, companies }: AddR
         name: formData.name.trim(),
         description: formData.description.trim(),
         company_id: formData.company_id,
-        permission_ids: formData.permission_ids
+        permission_ids: formData.permission_ids,
+        is_warehouse_incharge: formData.is_warehouse_incharge,
       }
 
       await createRole(payload)
@@ -243,6 +246,17 @@ export function AddRoleDialog({ open, onOpenChange, onSuccess, companies }: AddR
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="is_warehouse_incharge"
+                checked={formData.is_warehouse_incharge}
+                onCheckedChange={(checked) => setFormData({ ...formData, is_warehouse_incharge: checked as boolean })}
+              />
+              <Label htmlFor="is_warehouse_incharge" className="cursor-pointer">
+                Warehouse In-Charge
+              </Label>
             </div>
           </div>
 

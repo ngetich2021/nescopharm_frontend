@@ -204,11 +204,14 @@ export function PaymentModal({
               <SelectContent>
                 <SelectItem value="M-Pesa">M-Pesa</SelectItem>
                 <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
-                <SelectItem value="Cheque">Cheque</SelectItem>
                 <SelectItem value="Cash">Cash</SelectItem>
                 <SelectItem value="Credit Card">Credit Card</SelectItem>
               </SelectContent>
             </Select>
+            <p className="text-xs text-muted-foreground">
+              Paying by cheque? Cheques can only be recorded against an invoice, and stay pending until they clear —
+              invoice this order first, then record the cheque from there.
+            </p>
           </div>
 
           <div className="space-y-2">

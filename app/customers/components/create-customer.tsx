@@ -23,7 +23,7 @@ const formSchema = z.object({
   phone: z.string().min(10, { message: "Phone number must be at least 10 characters." }),
   notes: z.string().optional().or(z.literal("")),
   preferred_communication_channel: z.enum(["email", "phone", "whatsapp", "sms"]).optional().or(z.literal("")),
-  customer_type: z.enum(["individual", "business", "reseller", "other"]).optional().or(z.literal("")),
+  customer_type: z.enum(["individual", "company", "reseller", "other"]).optional().or(z.literal("")),
 })
 
 interface CreateCustomerSheetProps {
@@ -189,7 +189,7 @@ export function CreateCustomerSheet({ isOpen, onOpenChange, onCustomerCreated }:
                     </FormControl>
                     <SelectContent>
                       <SelectItem value="individual">Individual</SelectItem>
-                      <SelectItem value="business">Business</SelectItem>
+                      <SelectItem value="company">Company</SelectItem>
                       <SelectItem value="reseller">Reseller</SelectItem>
                       <SelectItem value="other">Other</SelectItem>
                     </SelectContent>

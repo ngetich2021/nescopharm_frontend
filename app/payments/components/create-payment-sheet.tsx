@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { createPayment, getOrders, PaymentOrder } from "@/lib/payments"
-import { getCustomers, Customer } from "@/lib/customers"
+import { getCustomers, Customer, getCustomerDisplayName } from "@/lib/customers"
 import { Loader2 } from "lucide-react"
 
 interface CreatePaymentSheetProps {
@@ -207,7 +207,7 @@ export function CreatePaymentSheet({ isOpen, onOpenChange, onPaymentCreated }: C
                     })
                     .map((customer) => (
                       <SelectItem key={customer.id} value={customer.id}>
-                        {customer.name} {customer.phone ? `(${customer.phone})` : ""} {customer.email ? `- ${customer.email}` : ""}
+                        {getCustomerDisplayName(customer)} {customer.phone ? `(${customer.phone})` : ""} {customer.email ? `- ${customer.email}` : ""}
                       </SelectItem>
                     ))
                 ) : (
@@ -295,11 +295,13 @@ export function CreatePaymentSheet({ isOpen, onOpenChange, onPaymentCreated }: C
               <SelectContent>
                 <SelectItem value="M-Pesa">M-Pesa</SelectItem>
                 <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
-                <SelectItem value="Cheque">Cheque</SelectItem>
                 <SelectItem value="Cash">Cash</SelectItem>
                 <SelectItem value="Credit Card">Credit Card</SelectItem>
               </SelectContent>
             </Select>
+            <p className="text-xs text-muted-foreground">
+              Paying by cheque? Record it from the invoice's "Record Payment" instead — cheques stay pending until they clear.
+            </p>
           </div>
 
           <div className="space-y-2">

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { AlertCircle, FileText, User, Calendar, DollarSign, Package, CheckCircle2, XCircle, Search, X } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { getCustomerDisplayName } from "@/lib/customers"
 
 interface ConvertQuoteWithSelectionDialogProps {
   open: boolean
@@ -175,7 +176,7 @@ export function ConvertQuoteWithSelectionDialog({
                             )}
                           </div>
                           <div className="text-sm text-gray-600">
-                            {quote.customer?.name || "Unknown Customer"}
+                            {quote.customer ? getCustomerDisplayName(quote.customer) : "Unknown Customer"}
                           </div>
                           {quote.customer?.email && (
                             <div className="text-xs text-gray-500">
@@ -229,7 +230,7 @@ export function ConvertQuoteWithSelectionDialog({
                     <User className="h-4 w-4 text-gray-500 mt-0.5" />
                     <div>
                       <span className="block text-xs text-gray-500">Customer</span>
-                      <span className="font-medium text-gray-900">{selectedQuote.customer?.name || "Unknown"}</span>
+                      <span className="font-medium text-gray-900">{selectedQuote.customer ? getCustomerDisplayName(selectedQuote.customer) : "Unknown"}</span>
                     </div>
                   </div>
 

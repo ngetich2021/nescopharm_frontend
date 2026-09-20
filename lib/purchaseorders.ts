@@ -20,6 +20,8 @@ export interface PurchaseOrder {
   company_id: string
   supplier_id: string
   discount?: number | null
+  shipping_cost?: number | string | null
+  logistics_cost?: number | string | null
   supplier_invoice_date?: string | null
   tax_rate?: number | null
   order_date: string
@@ -56,6 +58,8 @@ export interface CreatePurchaseOrderPayload {
   delivery_date: string
   store_id: string
   comments?: string
+  shipping_cost?: number
+  logistics_cost?: number
   items: Array<{
     product_id: string
     variant_id?: string | null
@@ -72,6 +76,8 @@ export interface UpdatePurchaseOrderPayload {
   store_id: string
   status: string
   comments?: string
+  shipping_cost?: number
+  logistics_cost?: number
   items: Array<{
     product_id: string
     variant_id?: string | null
@@ -83,6 +89,10 @@ export interface UpdatePurchaseOrderPayload {
 
 export interface ReceiptPurchaseOrderPayload {
   items: { id: string; received_quantity: number }[]
+  // Actual shipping/logistics cost for THIS shipment - distributed across the
+  // products being received in this call to update their landed-cost basis.
+  shipping_cost?: number
+  logistics_cost?: number
 }
 
 // List purchase orders
@@ -187,15 +197,15 @@ export async function deletePurchaseOrder(id: string): Promise<void> {
 }
 
 // Receipt a purchase order (partial or full)
-export async function receiptPurchaseOrder(id: string, payload: ReceiptPurchaseOrderPayload): Promise<{ order: PurchaseOrder; new_purchase_order?: PurchaseOrder }> {
-  const response = await apiCall<{ status: string; purchase_order: PurchaseOrder; new_purchase_order?: PurchaseOrder; message?: string }>(
+export async function receiptPurchaseOrder(id: string, payload: ReceiptPurchaseOrderPayload): Promise<{ order: PurchaseOrder; new_purchase_order?: PurchaseOrder; pricing_warnings: string[] }> {
+  const response = await apiCall<{ status: string; purchase_order: PurchaseOrder; new_purchase_order?: PurchaseOrder; pricing_warnings?: string[]; message?: string }>(
     `/purchase-orders/${id}/receipt`,
     "POST",
     payload,
     true
   )
   if (response.status === "success" && response.purchase_order) {
-    return { order: response.purchase_order, new_purchase_order: response.new_purchase_order }
+    return { order: response.purchase_order, new_purchase_order: response.new_purchase_order, pricing_warnings: response.pricing_warnings || [] }
   } else {
     throw new Error(response.message || "Failed to receipt purchase order")
   }

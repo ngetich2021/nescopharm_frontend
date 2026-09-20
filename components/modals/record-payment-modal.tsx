@@ -9,6 +9,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "@/components/ui/use-toast"
 import { recordInvoicePayment, RecordPaymentRequest, PaymentRecordResponse } from "@/lib/invoices"
+import { createCheque } from "@/lib/cheques"
+import { PAYMENT_METHODS } from "@/lib/payment-methods"
 import { Loader2 } from "lucide-react"
 
 interface RecordPaymentModalProps {
@@ -18,18 +20,8 @@ interface RecordPaymentModalProps {
   invoiceNumber: string
   totalAmount: number
   balanceAmount: number
-  onPaymentRecorded?: (result: PaymentRecordResponse) => void
+  onPaymentRecorded?: (result: PaymentRecordResponse | null) => void
 }
-
-const PAYMENT_METHODS = [
-  { value: "cash", label: "Cash" },
-  { value: "bank_transfer", label: "Bank Transfer" },
-  { value: "credit_card", label: "Credit Card" },
-  { value: "debit_card", label: "Debit Card" },
-  { value: "check", label: "Check" },
-  { value: "mobile_money", label: "Mobile Money" },
-  { value: "other", label: "Other" },
-]
 
 export function RecordPaymentModal({
   isOpen,
@@ -47,7 +39,13 @@ export function RecordPaymentModal({
     transaction_id: "",
     notes: ""
   })
+  const [chequeNumber, setChequeNumber] = useState("")
+  const [bankName, setBankName] = useState("")
+  const [maturityDate, setMaturityDate] = useState("")
+  const [chequeAttachment, setChequeAttachment] = useState<File | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const isCheque = formData.payment_method === "cheque"
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -79,23 +77,53 @@ export function RecordPaymentModal({
       return
     }
 
-    setIsSubmitting(true)
-    
-    try {
-      const result = await recordInvoicePayment(invoiceId, {
-        ...formData,
-        transaction_id: formData.transaction_id || undefined,
-        notes: formData.notes || undefined
-      })
-
+    if (isCheque && (!chequeNumber || !bankName || !maturityDate)) {
       toast({
-        title: "Success",
-        description: "Payment recorded successfully",
+        title: "Error",
+        description: "Please provide the cheque number, bank name, and maturity date",
+        variant: "destructive",
       })
+      return
+    }
 
-      onPaymentRecorded?.(result)
+    setIsSubmitting(true)
+
+    try {
+      if (isCheque) {
+        await createCheque({
+          invoice_id: invoiceId,
+          cheque_number: chequeNumber,
+          bank_name: bankName,
+          amount: formData.amount,
+          issue_date: formData.payment_date,
+          maturity_date: maturityDate,
+          notes: formData.notes || undefined,
+          attachment: chequeAttachment,
+        })
+
+        toast({
+          title: "Cheque recorded",
+          description: "It's pending until approved on maturity, from Sales > Cheques.",
+        })
+
+        onPaymentRecorded?.(null)
+      } else {
+        const result = await recordInvoicePayment(invoiceId, {
+          ...formData,
+          transaction_id: formData.transaction_id || undefined,
+          notes: formData.notes || undefined
+        })
+
+        toast({
+          title: "Success",
+          description: "Payment recorded successfully",
+        })
+
+        onPaymentRecorded?.(result)
+      }
+
       onClose()
-      
+
       // Reset form
       setFormData({
         amount: balanceAmount,
@@ -104,6 +132,10 @@ export function RecordPaymentModal({
         transaction_id: "",
         notes: ""
       })
+      setChequeNumber("")
+      setBankName("")
+      setMaturityDate("")
+      setChequeAttachment(null)
     } catch (error: any) {
       toast({
         title: "Error",
@@ -187,19 +219,71 @@ export function RecordPaymentModal({
             </Select>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="transaction_id">Transaction ID</Label>
-            <Input
-              id="transaction_id"
-              type="text"
-              value={formData.transaction_id}
-              onChange={(e) => setFormData(prev => ({ 
-                ...prev, 
-                transaction_id: e.target.value 
-              }))}
-              placeholder="Optional transaction reference"
-            />
-          </div>
+          {isCheque && (
+            <div className="grid grid-cols-2 gap-4 rounded-md border p-3 bg-muted/30">
+              <div className="space-y-2">
+                <Label htmlFor="cheque_number">Cheque Number *</Label>
+                <Input
+                  id="cheque_number"
+                  value={chequeNumber}
+                  onChange={(e) => setChequeNumber(e.target.value)}
+                  placeholder="e.g. 000123"
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="bank_name">Bank Name *</Label>
+                <Input
+                  id="bank_name"
+                  value={bankName}
+                  onChange={(e) => setBankName(e.target.value)}
+                  placeholder="e.g. Equity Bank"
+                  required
+                />
+              </div>
+              <div className="space-y-2 col-span-2">
+                <Label htmlFor="maturity_date">Maturity Date *</Label>
+                <Input
+                  id="maturity_date"
+                  type="date"
+                  value={maturityDate}
+                  onChange={(e) => setMaturityDate(e.target.value)}
+                  required
+                />
+                <p className="text-xs text-muted-foreground">
+                  This cheque will be recorded as pending and only applied to the invoice once approved on/after this date.
+                </p>
+              </div>
+              <div className="space-y-2 col-span-2">
+                <Label htmlFor="cheque_attachment">Cheque Image / PDF (optional)</Label>
+                <Input
+                  id="cheque_attachment"
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  onChange={(e) => setChequeAttachment(e.target.files?.[0] || null)}
+                />
+                {chequeAttachment && (
+                  <p className="text-xs text-muted-foreground">Selected: {chequeAttachment.name}</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {!isCheque && (
+            <div className="space-y-2">
+              <Label htmlFor="transaction_id">Transaction ID</Label>
+              <Input
+                id="transaction_id"
+                type="text"
+                value={formData.transaction_id}
+                onChange={(e) => setFormData(prev => ({
+                  ...prev,
+                  transaction_id: e.target.value
+                }))}
+                placeholder="Optional transaction reference"
+              />
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label htmlFor="notes">Notes</Label>
@@ -226,7 +310,7 @@ export function RecordPaymentModal({
             </Button>
             <Button type="submit" disabled={isSubmitting}>
               {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Record Payment
+              {isCheque ? "Record Cheque" : "Record Payment"}
             </Button>
           </div>
         </form>

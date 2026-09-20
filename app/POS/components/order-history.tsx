@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Search, Eye, Receipt, Calendar, User, CreditCard, Loader2 } from "lucide-react"
+import { getCustomerDisplayName } from "@/lib/customers"
 import { ReceiptPrinter } from "./receipt-printer"
 import { PaymentModal } from "./payment-modal"
 import { fetchOrders, Order, fetchOrderById } from "@/lib/orders"
@@ -185,7 +186,7 @@ export function OrderHistory() {
                 <div className="flex items-center gap-4 text-sm text-gray-600">
                   <div className="flex items-center gap-1">
                     <User className="h-4 w-4" />
-                    {order.customer?.name || "Unknown"}
+                    {order.customer ? getCustomerDisplayName(order.customer) : "Unknown"}
                   </div>
                   <div className="flex items-center gap-1">
                     <Calendar className="h-4 w-4" />
@@ -243,7 +244,7 @@ export function OrderHistory() {
 
               <div className="space-y-2">
                 <h4 className="font-medium">Customer</h4>
-                <p>{selectedOrder.customer?.name || "Unknown"}</p>
+                <p>{selectedOrder.customer ? getCustomerDisplayName(selectedOrder.customer) : "Unknown"}</p>
                 {selectedOrder.customer?.email && (
                   <p className="text-sm text-gray-600">{selectedOrder.customer.email}</p>
                 )}

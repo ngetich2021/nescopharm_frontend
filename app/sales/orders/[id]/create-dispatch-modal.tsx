@@ -67,7 +67,7 @@ export function CreateDispatchModal({
     const fetchApprovers = async () => {
       setLoadingApprovers(true)
       try {
-        const users = await getUsers()
+        const users = await getUsers({ role_scope: "exclude_sales_rep" })
         if (Array.isArray(users)) {
           setPotentialApprovers(users)
         }

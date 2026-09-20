@@ -38,13 +38,18 @@ export interface BankAccount {
   account_name: string;
   account_number: string;
   bank_name: string;
-  branch?: string;
+  branch_name?: string;
   account_type: 'current' | 'savings' | 'checking' | 'money_market' | 'certificate_of_deposit' | 'other';
-  currency: string;
+  currency_code: string;
   current_balance: number;
   is_active: boolean;
   opening_balance: number;
   opening_date: string;
+  bank_details?: {
+    mpesa_paybill?: string;
+    mpesa_account?: string;
+    [key: string]: unknown;
+  } | null;
   chart_of_account_id?: number;
   chart_of_account?: {
     id: number;

@@ -313,6 +313,7 @@ export interface StockCountItem {
   store_id: string;
   stock_count_id: string;
   product_id: string;
+  variant_id: string | null;
   product_name: string;
   product_sku: string | null;
   product_category: string | null;
@@ -330,6 +331,13 @@ export interface StockCountItem {
   created_at: string;
   updated_at: string;
   product?: Pick<Product, 'id' | 'name' | 'unit_cost'>;
+  variant?: {
+    id: string;
+    product_id: string;
+    name: string;
+    sku: string | null;
+    stock_quantity: number;
+  } | null;
 }
 
 export interface StockCount {
@@ -392,6 +400,7 @@ export interface StockCount {
 
 export interface CreateStockCountItem {
   product_id: string;
+  variant_id?: string;
   expected_quantity: number;
   counted_quantity?: number | null;
   notes?: string;

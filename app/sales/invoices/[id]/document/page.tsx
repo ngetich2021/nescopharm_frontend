@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card"
 import { fetchInvoiceById, Invoice } from "@/lib/invoices"
 import { getCompany, Company } from "@/lib/company"
 import { getCustomerProfile, CustomerProfileData } from "@/lib/customers"
+import { INVOICE_PAYMENT_DETAILS } from "@/lib/invoice-payment-details"
 import { ArrowLeft, Download, Mail, Printer } from "lucide-react"
 import { Loader2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
@@ -67,6 +68,14 @@ export default function InvoiceDocumentPage({ params }: { params: Promise<{ id: 
   const handlePrint = () => {
     window.print()
   }
+
+  // Allow linking straight to a print dialog, e.g. a "Print" button elsewhere in the app.
+  useEffect(() => {
+    if (!isLoading && invoice && typeof window !== 'undefined' && window.location.search.includes('autoprint=1')) {
+      const timer = setTimeout(() => window.print(), 300)
+      return () => clearTimeout(timer)
+    }
+  }, [isLoading, invoice])
 
   const handleDownloadPDF = async () => {
     if (!invoiceRef.current || !invoice) return
@@ -200,6 +209,16 @@ export default function InvoiceDocumentPage({ params }: { params: Promise<{ id: 
           ref={invoiceRef}
           className="max-w-4xl mx-auto bg-white p-8 md:p-12 shadow-lg print:shadow-none print:max-w-none print:m-0 print:p-8 print:border-0"
         >
+          {/* Letterhead Banner - the sole source of company identity/contact info on this document */}
+          {(company?.letterhead_url || invoice.company?.letterhead_url) && (
+            <img
+              src={company?.letterhead_url || invoice.company?.letterhead_url || undefined}
+              alt={`${company?.name || invoice.company?.name} letterhead`}
+              className="w-full h-auto mb-8"
+              crossOrigin="anonymous"
+            />
+          )}
+
           {/* Header */}
           <div className="flex justify-between items-start mb-8">
             <div>
@@ -218,28 +237,8 @@ export default function InvoiceDocumentPage({ params }: { params: Promise<{ id: 
             </div>
           </div>
 
-          {/* From/To Section */}
-          <div className="grid grid-cols-2 gap-8 mb-8">
-            <div>
-              <p className="text-sm font-semibold text-gray-600 mb-2">FROM</p>
-              <div className="text-gray-900">
-                <p className="font-semibold">{company?.name || invoice.company?.name || 'Company Name'}</p>
-                {(company?.address || invoice.company?.address) && (
-                  <p className="text-sm">{company?.address || invoice.company?.address}</p>
-                )}
-                {(company?.city || company?.state || company?.postal_code) && (
-                  <p className="text-sm">
-                    {[company?.city, company?.state, company?.postal_code].filter(Boolean).join(', ')}
-                  </p>
-                )}
-                {(company?.phone || invoice.company?.phone) && (
-                  <p className="text-sm">Phone: {company?.phone || invoice.company?.phone}</p>
-                )}
-                {(company?.email || invoice.company?.email) && (
-                  <p className="text-sm">Email: {company?.email || invoice.company?.email}</p>
-                )}
-              </div>
-            </div>
+          {/* Bill To - company identity already shown once, in the letterhead above */}
+          <div className="mb-8">
             <div>
               <p className="text-sm font-semibold text-gray-600 mb-2">BILL TO</p>
               <div className="text-gray-900">
@@ -345,6 +344,29 @@ export default function InvoiceDocumentPage({ params }: { params: Promise<{ id: 
                   <p className="text-sm text-gray-600">{invoice.notes}</p>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Payment Details - only relevant while there's still a balance to collect */}
+          {invoice.status !== 'paid' && (
+            <div className="mt-8 pt-6 border-t border-gray-200">
+              <p className="text-sm font-bold text-gray-800 mb-3">
+                {(company?.name || 'COMPANY').toUpperCase()} PAYMENT DETAILS
+              </p>
+              <div className="grid grid-cols-2 gap-8 text-sm text-gray-600">
+                <div>
+                  <p className="font-semibold text-gray-800 mb-1">MPESA</p>
+                  <p>Paybill Number: {INVOICE_PAYMENT_DETAILS.mpesaPaybill}</p>
+                  <p>Account Number: {INVOICE_PAYMENT_DETAILS.mpesaAccount}</p>
+                </div>
+                <div>
+                  <p className="font-semibold text-gray-800 mb-1">BANK DETAILS</p>
+                  <p>Bank Name: {INVOICE_PAYMENT_DETAILS.bankName}</p>
+                  <p>Bank Account Name: {INVOICE_PAYMENT_DETAILS.bankAccountName}</p>
+                  <p>Account Number: {INVOICE_PAYMENT_DETAILS.bankAccountNumber}</p>
+                  <p>Bank Branch: {INVOICE_PAYMENT_DETAILS.bankBranch}</p>
+                </div>
+              </div>
             </div>
           )}
 

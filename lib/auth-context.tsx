@@ -72,6 +72,8 @@ interface ApiUser {
     id: string;
     name: string;
     description: string;
+    is_sales_rep?: boolean;
+    is_warehouse_incharge?: boolean;
     permissions?: Permission[];
   } | null;
   created_at?: string;

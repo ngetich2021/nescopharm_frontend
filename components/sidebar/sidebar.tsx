@@ -146,6 +146,7 @@ function Sidebar() {
     { name: "Orders", href: "/sales/orders", icon: ShoppingCart, permission: "can_view_sales_menu" },
     { name: "Invoices", href: "/sales/invoices", icon: ReceiptText, permission: "can_view_sales_menu" },
     { name: "Credit Notes", href: "/sales/credit-notes", icon: FileText, permission: "can_view_sales_menu" },
+    { name: "Cheques", href: "/sales/cheques", icon: Banknote, permission: "can_view_sales_menu" },
   ]
   
   // Define inventory dropdown items

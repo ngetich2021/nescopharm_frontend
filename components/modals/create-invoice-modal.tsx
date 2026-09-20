@@ -12,17 +12,20 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Trash2, Plus, Search, Package } from "lucide-react"
+import { Trash2, Plus, Search, Package, Wallet, CreditCard as CreditCardIcon } from "lucide-react"
 import { useForm, useFieldArray, type SubmitHandler } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import { createInvoice, CreateInvoiceRequest } from "@/lib/invoices"
-import { getCustomers, createCustomer } from "@/lib/customers"
+import { createInvoice, CreateInvoiceRequest, fetchSalesReps, SalesRep } from "@/lib/invoices"
+import { getCustomers, createCustomer, fetchCustomerCreditTerms, CustomerCreditTerms, getCustomerDisplayName } from "@/lib/customers"
+import { INSTANT_PAYMENT_METHODS } from "@/lib/payment-methods"
 import { getProducts } from "@/lib/products"
 import { useToast } from "@/hooks/use-toast"
 import { formatCurrency } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
 import { MappingValidationAlert } from "@/components/mapping-validation-alert"
+import { CreditOveragePrompt } from "@/components/credit-overage-prompt"
+import { getCreditOverage, coversOverage } from "@/lib/credit-overage"
 import {
   INVOICE_TAX_OPTIONS,
   invoiceTaxCodeForProduct,
@@ -44,7 +47,7 @@ const invoiceSchema = z.object({
   customer_id: z.string().min(1, "Customer is required"),
   type: z.enum(['sales', 'service', 'recurring']),
   invoice_date: z.string().min(1, "Invoice date is required"),
-  due_date: z.string().min(1, "Due date is required"),
+  due_date: z.string().optional(),
   currency: z.string().min(1, "Currency is required"),
   payment_terms: z.string().optional(),
   notes: z.string().optional(),
@@ -86,6 +89,8 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
   const [products, setProducts] = useState<any[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [productSearchTerm, setProductSearchTerm] = useState("")
+  const [productSearchResults, setProductSearchResults] = useState<any[] | null>(null)
+  const [isSearchingProducts, setIsSearchingProducts] = useState(false)
   const [showProductSearch, setShowProductSearch] = useState<number | null>(null)
   const [customerSearchTerm, setCustomerSearchTerm] = useState("")
   const [showCustomerSearch, setShowCustomerSearch] = useState(false)
@@ -93,8 +98,24 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
   const [newCustomerName, setNewCustomerName] = useState("")
   const [newCustomerEmail, setNewCustomerEmail] = useState("")
   const [newCustomerPhone, setNewCustomerPhone] = useState("")
+  const [salesReps, setSalesReps] = useState<SalesRep[]>([])
+  const [salesRepId, setSalesRepId] = useState<string>("")
+  const [paymentOption, setPaymentOption] = useState<'instant' | 'credit'>('instant')
+  const [paymentMethod, setPaymentMethod] = useState<string>("")
+  const [transactionRef, setTransactionRef] = useState("")
+  const [creditTerms, setCreditTerms] = useState<CustomerCreditTerms | null>(null)
+  const [isLoadingCreditTerms, setIsLoadingCreditTerms] = useState(false)
+  const [downPaymentAmount, setDownPaymentAmount] = useState(0)
+  const [downPaymentMethod, setDownPaymentMethod] = useState("")
+  const [downPaymentTransactionRef, setDownPaymentTransactionRef] = useState("")
   const { toast } = useToast()
   const { companyId } = useAuth()
+
+  useEffect(() => {
+    if (open) {
+      fetchSalesReps().then(setSalesReps).catch(() => setSalesReps([]))
+    }
+  }, [open])
 
   const form = useForm<InvoiceFormData>({
     resolver: zodResolver(invoiceSchema),
@@ -103,9 +124,9 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
       customer_id: '',
       type: 'sales',
       invoice_date: new Date().toISOString().split('T')[0],
-      due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 30 days from now
+      due_date: '', // left blank = auto-calculated from the customer's credit terms
       currency: 'KES',
-      payment_terms: 'Net 30',
+      payment_terms: '',
       notes: '',
       terms_and_conditions: 'Standard terms and conditions apply',
       line_items: [
@@ -123,6 +144,28 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
       generate_etims_receipt: true,
     }
   })
+
+  const watchedCustomerId = form.watch('customer_id')
+
+  useEffect(() => {
+    setDownPaymentAmount(0)
+    setDownPaymentMethod("")
+    setDownPaymentTransactionRef("")
+    if (!watchedCustomerId) {
+      setCreditTerms(null)
+      return
+    }
+    setIsLoadingCreditTerms(true)
+    fetchCustomerCreditTerms(watchedCustomerId)
+      .then((terms) => {
+        setCreditTerms(terms)
+        // Default the payment option to whatever this customer is registered as,
+        // but the user can still switch it for a one-off exception.
+        setPaymentOption(terms.payment_method === 'credit' ? 'credit' : 'instant')
+      })
+      .catch(() => setCreditTerms(null))
+      .finally(() => setIsLoadingCreditTerms(false))
+  }, [watchedCustomerId])
 
   const { fields, append, remove } = useFieldArray({
     control: form.control,
@@ -148,7 +191,7 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
 
   const loadProducts = async () => {
     try {
-      const productsData = await getProducts()
+      const productsData = await getProducts(1, 200)
       setProducts(productsData.data || [])
     } catch (error) {
       console.error('Failed to load products:', error)
@@ -157,23 +200,49 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
 
   // Filter customers based on search term
   const filteredCustomers = customers.filter(customer => {
-    const matchesSearch = customerSearchTerm === "" || 
+    const matchesSearch = customerSearchTerm === "" ||
       customer.name?.toLowerCase().includes(customerSearchTerm.toLowerCase()) ||
       customer.email?.toLowerCase().includes(customerSearchTerm.toLowerCase()) ||
       customer.phone?.toLowerCase().includes(customerSearchTerm.toLowerCase())
-    
+
     return matchesSearch
   })
 
-  // Filter products based on search term
-  const filteredProducts = products.filter(product => {
-    const matchesSearch = productSearchTerm === "" || 
-      product.name?.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
-      product.sku?.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
-      product.description?.toLowerCase().includes(productSearchTerm.toLowerCase())
-    
-    return matchesSearch
-  })
+  // Search products server-side once the query is long enough, so results aren't
+  // limited to whatever happened to load in the initial page of products.
+  useEffect(() => {
+    if (!open) return
+    const term = productSearchTerm.trim()
+    if (term.length < 2) {
+      setProductSearchResults(null)
+      return
+    }
+    setIsSearchingProducts(true)
+    const timer = setTimeout(async () => {
+      try {
+        const { data } = await getProducts(1, 50, { search: term })
+        setProductSearchResults(data || [])
+      } catch (error) {
+        console.error('Product search failed:', error)
+        setProductSearchResults([])
+      } finally {
+        setIsSearchingProducts(false)
+      }
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [productSearchTerm, open])
+
+  // Below the search threshold, fall back to filtering the initially loaded page.
+  const filteredProducts = productSearchResults !== null
+    ? productSearchResults
+    : products.filter(product => {
+        const matchesSearch = productSearchTerm === "" ||
+          product.name?.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
+          product.sku?.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
+          product.description?.toLowerCase().includes(productSearchTerm.toLowerCase())
+
+        return matchesSearch
+      })
 
   // Calculate line totals and invoice totals
   const watchedLineItems = form.watch('line_items')
@@ -227,10 +296,41 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
     total: finalTotal,
   }
 
+  const creditOverage = paymentOption === 'credit' && creditTerms?.credit_days
+    ? getCreditOverage(finalInvoiceTotals.total, creditTerms.available_credit)
+    : 0
+
   const onSubmit: SubmitHandler<InvoiceFormData> = async (data) => {
+    if (paymentOption === 'instant' && !paymentMethod) {
+      toast({
+        title: "Error",
+        description: "Select how the payment was received (cash, M-Pesa, bank, etc.)",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (paymentOption === 'credit' && !creditTerms?.credit_days) {
+      toast({
+        title: "Error",
+        description: "This customer has no GM-approved credit terms. Get credit terms approved, or switch to instant payment.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (creditOverage > 0 && (!coversOverage(downPaymentAmount, creditOverage) || !downPaymentMethod)) {
+      toast({
+        title: "Error",
+        description: `This exceeds available credit by KES ${creditOverage.toLocaleString()}. Enter how that amount will be paid now to proceed.`,
+        variant: "destructive",
+      })
+      return
+    }
+
     try {
       setIsLoading(true)
-      
+
       // Calculate proportional discount for each line item
       const subtotal = data.line_items.reduce((sum, item) => {
         return sum + (Number(item.quantity) * Number(item.unit_price))
@@ -262,11 +362,19 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
       
       const invoiceData = {
         customer_id: data.customer_id,
+        sales_rep_id: salesRepId || undefined,
+        payment_option: paymentOption,
+        payment_method: paymentOption === 'instant' ? paymentMethod : undefined,
+        transaction_id: paymentOption === 'instant' ? (transactionRef || undefined) : undefined,
+        down_payment_amount: paymentOption === 'credit' && creditOverage > 0 ? downPaymentAmount : undefined,
+        down_payment_method: paymentOption === 'credit' && creditOverage > 0 ? downPaymentMethod : undefined,
+        down_payment_transaction_id: paymentOption === 'credit' && creditOverage > 0 ? (downPaymentTransactionRef || undefined) : undefined,
         type: data.type,
         invoice_date: data.invoice_date,
-        due_date: data.due_date,
+        // Left blank: the backend auto-calculates due_date from the customer's credit terms
+        due_date: paymentOption === 'credit' ? (data.due_date || undefined) : undefined,
         currency: data.currency,
-        payment_terms: data.payment_terms,
+        payment_terms: paymentOption === 'credit' ? (data.payment_terms || undefined) : undefined,
         notes: data.notes,
         terms_and_conditions: data.terms_and_conditions,
         generate_etims_receipt: data.generate_etims_receipt,
@@ -292,6 +400,14 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
       invalidateCacheKey('invoices')
       
       form.reset()
+      setSalesRepId("")
+      setPaymentOption('instant')
+      setPaymentMethod("")
+      setTransactionRef("")
+      setCreditTerms(null)
+      setDownPaymentAmount(0)
+      setDownPaymentMethod("")
+      setDownPaymentTransactionRef("")
       onSuccess()
     } catch (error: any) {
       toast({
@@ -441,8 +557,11 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
                           aria-expanded={showCustomerSearch}
                           className="w-full justify-between"
                         >
-                          {form.watch('customer_id') 
-                            ? customers.find(customer => customer.id === form.watch('customer_id'))?.name
+                          {form.watch('customer_id')
+                            ? (() => {
+                                const selected = customers.find(customer => customer.id === form.watch('customer_id'))
+                                return selected ? getCustomerDisplayName(selected) : "Select or search customer"
+                              })()
                             : "Select or search customer"}
                           <Search className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                         </Button>
@@ -484,7 +603,7 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
                                     setCustomerSearchTerm("")
                                   }}
                                 >
-                                  <span className="font-medium text-sm">{customer.name}</span>
+                                  <span className="font-medium text-sm">{getCustomerDisplayName(customer)}</span>
                                   <div className="text-xs text-gray-500">
                                     {customer.email && <div>{customer.email}</div>}
                                     {customer.phone && <div>{customer.phone}</div>}
@@ -568,33 +687,144 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="payment_terms">Payment Terms</Label>
-                  <Select 
-                    value={form.watch('payment_terms') || ''}
-                    onValueChange={(value) => form.setValue('payment_terms', value)}
+                  <Label htmlFor="sales_rep_id">Sales Rep</Label>
+                  <Select
+                    value={salesRepId || "none"}
+                    onValueChange={(value) => setSalesRepId(value === "none" ? "" : value)}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="Select payment terms" />
+                      <SelectValue placeholder="Unassigned" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Net 15">Net 15</SelectItem>
-                      <SelectItem value="Net 30">Net 30</SelectItem>
-                      <SelectItem value="Net 45">Net 45</SelectItem>
-                      <SelectItem value="Net 60">Net 60</SelectItem>
-                      <SelectItem value="Due on Receipt">Due on Receipt</SelectItem>
-                      <SelectItem value="Due end of the month">Due end of the month</SelectItem>
-                      <SelectItem value="Due end of next month">Due end of next month</SelectItem>
-                      <SelectItem value="Custom">Custom</SelectItem>
+                      <SelectItem value="none">Unassigned</SelectItem>
+                      {salesReps.map((rep) => (
+                        <SelectItem key={rep.id} value={rep.id}>
+                          {rep.full_name || `${rep.first_name} ${rep.last_name}`}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
 
+              {/* How is this being paid? */}
+              <div className="space-y-3 rounded-lg border p-4">
+                <Label>How is this being paid? *</Label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentOption('instant')}
+                    className={`flex items-center gap-2 rounded-md border p-3 text-sm font-medium transition-colors ${
+                      paymentOption === 'instant'
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    <Wallet className="h-4 w-4" />
+                    Instant Payment
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentOption('credit')}
+                    className={`flex items-center gap-2 rounded-md border p-3 text-sm font-medium transition-colors ${
+                      paymentOption === 'credit'
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    <CreditCardIcon className="h-4 w-4" />
+                    Credit
+                  </button>
+                </div>
+
+                {paymentOption === 'instant' ? (
+                  <div className="grid grid-cols-2 gap-3 pt-1">
+                    <div className="space-y-2">
+                      <Label htmlFor="payment_method">Payment Method *</Label>
+                      <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="How was it paid?" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {INSTANT_PAYMENT_METHODS.map((m) => (
+                            <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="transaction_ref">Reference (optional)</Label>
+                      <Input
+                        id="transaction_ref"
+                        value={transactionRef}
+                        onChange={(e) => setTransactionRef(e.target.value)}
+                        placeholder="M-Pesa code, bank ref, etc."
+                      />
+                    </div>
+                    <p className="col-span-2 text-xs text-muted-foreground">
+                      The invoice will be created and marked paid immediately. Paying by cheque?
+                      Create it on credit instead, then record the cheque from the invoice — it stays pending until it clears.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3 pt-1">
+                    {isLoadingCreditTerms ? (
+                      <p className="text-sm text-muted-foreground">Loading customer's credit terms...</p>
+                    ) : !watchedCustomerId ? (
+                      <p className="text-sm text-muted-foreground">Select a customer to see their credit terms.</p>
+                    ) : creditTerms?.credit_days ? (
+                      <div className="rounded-md bg-purple-50 border border-purple-200 p-3 text-sm">
+                        <p className="font-medium text-purple-900">
+                          Approved terms: Net {creditTerms.credit_days} ({creditTerms.credit_days} days)
+                        </p>
+                        {creditTerms.available_credit != null && (
+                          <p className="text-purple-700">Available credit: KES {Number(creditTerms.available_credit).toLocaleString()}</p>
+                        )}
+                        {creditTerms.has_pending_change && (
+                          <p className="text-amber-700 mt-1">Note: a terms change is pending GM approval and not yet in effect.</p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="rounded-md bg-yellow-50 border border-yellow-200 p-3 text-sm text-yellow-800">
+                        No GM-approved credit terms on file for this customer. Get credit terms approved, or
+                        switch to instant payment, before this invoice can be created.
+                      </div>
+                    )}
+
+                    {creditOverage > 0 && (
+                      <CreditOveragePrompt
+                        overage={creditOverage}
+                        downPaymentAmount={downPaymentAmount}
+                        onDownPaymentAmountChange={setDownPaymentAmount}
+                        downPaymentMethod={downPaymentMethod}
+                        onDownPaymentMethodChange={setDownPaymentMethod}
+                        downPaymentTransactionRef={downPaymentTransactionRef}
+                        onDownPaymentTransactionRefChange={setDownPaymentTransactionRef}
+                      />
+                    )}
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <Label htmlFor="due_date">Due Date Override</Label>
+                        <Input type="date" {...form.register('due_date')} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="payment_terms">Payment Terms Override</Label>
+                        <Input
+                          {...form.register('payment_terms')}
+                          placeholder={creditTerms?.credit_days ? `Net ${creditTerms.credit_days}` : "Net 30"}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">
                   <Label htmlFor="type">Invoice Type</Label>
-                  <Select 
-                    value={form.watch('type')} 
+                  <Select
+                    value={form.watch('type')}
                     onValueChange={(value: 'sales' | 'service' | 'recurring') => form.setValue('type', value)}
                   >
                     <SelectTrigger>
@@ -637,17 +867,6 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
                   />
                   {form.formState.errors.invoice_date && (
                     <p className="text-sm text-red-600">{form.formState.errors.invoice_date.message}</p>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="due_date">Due Date</Label>
-                  <Input
-                    type="date"
-                    {...form.register('due_date')}
-                  />
-                  {form.formState.errors.due_date && (
-                    <p className="text-sm text-red-600">{form.formState.errors.due_date.message}</p>
                   )}
                 </div>
               </div>
@@ -712,7 +931,9 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
                               </Button>
                             </div>
                             <div className="max-h-60 overflow-y-auto">
-                              {filteredProducts.length === 0 ? (
+                              {isSearchingProducts ? (
+                                <div className="p-3 text-sm text-gray-500 text-center">Searching...</div>
+                              ) : filteredProducts.length === 0 ? (
                                 <div className="p-3 text-sm text-gray-500 text-center">
                                   {productSearchTerm ? 'No products found' : 'No products available'}
                                 </div>
@@ -1007,7 +1228,14 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
               <Button type="button" variant="outline" onClick={onClose}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={isLoading}>
+              <Button
+                type="submit"
+                disabled={
+                  isLoading ||
+                  (paymentOption === 'credit' && !creditTerms?.credit_days) ||
+                  (creditOverage > 0 && (!coversOverage(downPaymentAmount, creditOverage) || !downPaymentMethod))
+                }
+              >
                 {isLoading ? "Creating..." : "Create Invoice"}
               </Button>
             </div>

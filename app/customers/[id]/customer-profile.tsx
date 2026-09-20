@@ -8,6 +8,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { CustomerOrders } from "./customer-orders"
 import { CustomerPayments } from "./customer-payments"
+import { CustomerCredit } from "./customer-credit"
 import {
   X,
   Mail,
@@ -32,6 +33,7 @@ import {
   Calendar,
   ShoppingCart,
   CreditCard,
+  History,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import {
@@ -879,6 +881,13 @@ export function CustomerProfile({ customerId, isOpen, onClose }: CustomerProfile
                     <CreditCard className="h-5 w-5" />
                     <span>Payments</span>
                   </TabsTrigger>
+                  <TabsTrigger
+                    value="credit"
+                    className="data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none px-2 py-4 h-full bg-transparent flex items-center gap-2 transition-all font-medium"
+                  >
+                    <History className="h-5 w-5" />
+                    <span>Credit</span>
+                  </TabsTrigger>
                 </TabsList>
               </div>
             </div>
@@ -1184,6 +1193,10 @@ export function CustomerProfile({ customerId, isOpen, onClose }: CustomerProfile
                 {/* Pass customerPayments directly to CustomerPayments component */}
                 <CustomerPayments customerId={customerId} initialPayments={customerPayments} />
               </div>
+            </TabsContent>
+
+            <TabsContent value="credit" className="p-0 m-0">
+              <CustomerCredit customerId={customerId} />
             </TabsContent>
           </Tabs>
         </div>
