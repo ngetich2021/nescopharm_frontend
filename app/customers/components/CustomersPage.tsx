@@ -210,13 +210,14 @@ export function CustomersPage() {
         />
 
         {/* View Customer Modal */}
-        <CustomerProfileModal 
-          open={viewModalOpen} 
-          onOpenChange={setViewModalOpen} 
-          customer={selectedCustomer} 
+        <CustomerProfileModal
+          open={viewModalOpen}
+          onOpenChange={setViewModalOpen}
+          customer={selectedCustomer}
           onClose={handleCloseViewModal}
           onRefresh={handleRefresh}
           onEdit={handleEditCustomer}
+          onViewAccount={handleViewAccount}
         />
 
         {/* Create Modal - Only show if user has create permission */}

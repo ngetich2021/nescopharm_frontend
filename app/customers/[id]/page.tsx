@@ -19,8 +19,9 @@ export default async function CustomerProfilePage({ params }: { params: { id: st
         </div>
       }
     >
-      <CustomerProfile customerId={id} isOpen={false} onClose={function (): void {
-        throw new Error("Function not implemented.")
+      <CustomerProfile customerId={id} isOpen={true} onClose={function (): void {
+        // No-op here - this is a direct page route, not a panel; there's
+        // nothing to "close" back to within this same page.
       } } />
     </Suspense>
   )

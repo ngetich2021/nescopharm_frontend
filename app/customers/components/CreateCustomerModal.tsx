@@ -1688,7 +1688,7 @@ export function CreateCustomerModal({
           )}
 
           {/* Directors Information (for credit accounts) */}
-          {paymentMethod === "credit" && customerType === "company" && (
+          {paymentMethod === "credit" && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -1772,7 +1772,7 @@ export function CreateCustomerModal({
           )}
 
           {/* Authorised Purchase Persons (for credit accounts) */}
-          {paymentMethod === "credit" && customerType === "company" && (
+          {paymentMethod === "credit" && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -1836,7 +1836,7 @@ export function CreateCustomerModal({
           )}
 
           {/* Suppliers Information (for credit accounts) */}
-          {paymentMethod === "credit" && customerType === "company" && (
+          {paymentMethod === "credit" && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">

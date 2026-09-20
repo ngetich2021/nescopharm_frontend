@@ -33,6 +33,7 @@ import { type Payment } from "@/lib/customers";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format } from "date-fns";
 import { PermissionGuard } from "@/components/PermissionGuard";
+import { ApplicationStatusSection } from "@/app/customers/[id]/application-status-section";
 
 interface CustomerProfileModalProps {
   open: boolean;
@@ -41,6 +42,7 @@ interface CustomerProfileModalProps {
   onClose: () => void;
   onRefresh: () => void;
   onEdit?: (customer: Customer) => void;
+  onViewAccount?: (customer: Customer) => void;
 }
 
 export function CustomerProfileModal({
@@ -50,6 +52,7 @@ export function CustomerProfileModal({
   onClose,
   onRefresh,
   onEdit,
+  onViewAccount,
 }: CustomerProfileModalProps) {
   const [customerProfile, setCustomerProfile] = useState<CustomerProfileData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -189,13 +192,65 @@ export function CustomerProfileModal({
                         {[
                           currentCustomer.address,
                           currentCustomer.city,
-                          currentCustomer.state,
+                          (currentCustomer as any).county,
+                          (currentCustomer as any).region,
                           currentCustomer.country,
                           currentCustomer.postal_code
                         ].filter(Boolean).join(", ") || "No address provided"}
                       </div>
                     </div>
                   </div>
+
+                  {/* Company Details - only meaningful when at least one field was captured */}
+                  {(currentCustomer as any).trading_name ||
+                  (currentCustomer as any).business_type ||
+                  (currentCustomer as any).registration_number ||
+                  (currentCustomer as any).ppb_license_number ||
+                  (currentCustomer as any).website ||
+                  (currentCustomer as any).telephone ? (
+                    <div className="space-y-3 pt-4 border-t">
+                      <h4 className="font-medium text-gray-900 flex items-center gap-2">
+                        <Building className="h-4 w-4" />
+                        Company Details
+                      </h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-sm text-gray-600">
+                        {currentCustomer.business_name && <div><span className="text-gray-400">Business Name:</span> {currentCustomer.business_name}</div>}
+                        {(currentCustomer as any).trading_name && <div><span className="text-gray-400">Trading Name:</span> {(currentCustomer as any).trading_name}</div>}
+                        {(currentCustomer as any).business_type && <div><span className="text-gray-400">Business Type:</span> {(currentCustomer as any).business_type}</div>}
+                        {(currentCustomer as any).registration_number && <div><span className="text-gray-400">Registration No.:</span> {(currentCustomer as any).registration_number}</div>}
+                        {(currentCustomer as any).ppb_license_number && <div><span className="text-gray-400">PPB License No.:</span> {(currentCustomer as any).ppb_license_number}</div>}
+                        {(currentCustomer as any).website && <div><span className="text-gray-400">Website:</span> {(currentCustomer as any).website}</div>}
+                        {(currentCustomer as any).telephone && <div><span className="text-gray-400">Telephone:</span> {(currentCustomer as any).telephone}</div>}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Accounts Contact - separate from the primary contact above */}
+                  {(currentCustomer as any).accounts_contact_name || (currentCustomer as any).accounts_contact_email || (currentCustomer as any).accounts_contact_phone ? (
+                    <div className="space-y-3 pt-4 border-t">
+                      <h4 className="font-medium text-gray-900 flex items-center gap-2">
+                        <Users className="h-4 w-4" />
+                        Accounts Contact
+                      </h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-sm text-gray-600">
+                        {(currentCustomer as any).accounts_contact_name && <div><span className="text-gray-400">Name:</span> {(currentCustomer as any).accounts_contact_name}</div>}
+                        {(currentCustomer as any).accounts_contact_designation && <div><span className="text-gray-400">Designation:</span> {(currentCustomer as any).accounts_contact_designation}</div>}
+                        {(currentCustomer as any).accounts_contact_phone && <div><span className="text-gray-400">Phone:</span> {(currentCustomer as any).accounts_contact_phone}</div>}
+                        {(currentCustomer as any).accounts_contact_email && <div><span className="text-gray-400">Email:</span> {(currentCustomer as any).accounts_contact_email}</div>}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Linked credit account - full directors/suppliers/bank-details/credit-terms
+                      already live in ViewAccountModal, reused here rather than duplicated */}
+                  {currentCustomer.account_id && onViewAccount && (
+                    <div className="pt-4 border-t">
+                      <Button variant="outline" size="sm" onClick={() => onViewAccount(currentCustomer as Customer)}>
+                        <CreditCard className="mr-2 h-4 w-4" />
+                        View Credit Account Details
+                      </Button>
+                    </div>
+                  )}
 
                   {/* Customer Metrics */}
                   <div className="grid grid-cols-3 gap-4 pt-4 border-t">
@@ -220,6 +275,18 @@ export function CustomerProfileModal({
                   </div>
                 </CardContent>
               </Card>
+
+              {/* Credit-approval workflow status (rep-submitted customers only) */}
+              <ApplicationStatusSection
+                customerId={currentCustomer.id}
+                approvalStatus={(currentCustomer as any).approval_status}
+                onRefresh={() => {
+                  if (customer?.id) {
+                    getCustomerProfile(customer.id).then((profile) => setCustomerProfile(profile));
+                  }
+                  onRefresh();
+                }}
+              />
 
               {/* Tabs for detailed information */}
               <Tabs defaultValue="orders" className="w-full">

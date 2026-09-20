@@ -189,8 +189,16 @@ export function EditCustomerModal({
       // Load existing documents
       loadCustomerDocuments(customer.id);
       
-      // Load customer account if payment method is credit
-      if (method === "credit" && customer.account_id) {
+      // Load the linked CustomerAccount whenever one exists - not just when
+      // payment_method literally says "credit". A customer approved through
+      // the rep credit-appraisal workflow gets an account (with directors/
+      // suppliers/bank details/credit terms already captured) without ever
+      // going through this modal's own "Payment Method: Credit" flow, so its
+      // payment_method can still read "cash" even though a real account with
+      // real data exists - that data must still show up here.
+      if (customer.account_id) {
+        setPaymentMethod("credit");
+        paymentMethodRef.current = "credit";
         loadCustomerAccount(customer.account_id);
       } else {
         // Reset credit fields if not credit
@@ -1423,7 +1431,7 @@ export function EditCustomerModal({
           )}
 
           {/* Directors Information (for credit accounts) */}
-          {paymentMethod === "credit" && customerType === "company" && (
+          {paymentMethod === "credit" && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -1507,7 +1515,7 @@ export function EditCustomerModal({
           )}
 
           {/* Authorised Purchase Persons (for credit accounts) */}
-          {paymentMethod === "credit" && customerType === "company" && (
+          {paymentMethod === "credit" && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -1571,7 +1579,7 @@ export function EditCustomerModal({
           )}
 
           {/* Suppliers Information (for credit accounts) */}
-          {paymentMethod === "credit" && customerType === "company" && (
+          {paymentMethod === "credit" && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
