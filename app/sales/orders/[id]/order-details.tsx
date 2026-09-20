@@ -618,7 +618,13 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
               Create Credit Note
             </Button>
           )}
-          <Button variant="outline" size="sm" className="text-xs sm:text-sm h-8 sm:h-9">
+          {/* Always-available order document, regardless of invoice status. */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-xs sm:text-sm h-8 sm:h-9"
+            onClick={() => router.push(`/sales/orders/${order.id}/document`)}
+          >
             <Printer className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
             Print
           </Button>
