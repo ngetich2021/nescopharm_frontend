@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { CustomerOrders } from "./customer-orders"
 import { CustomerPayments } from "./customer-payments"
 import { CustomerCredit } from "./customer-credit"
+import { ApplicationStatusSection } from "./application-status-section"
 import {
   X,
   Mail,
@@ -761,6 +762,15 @@ export function CustomerProfile({ customerId, isOpen, onClose }: CustomerProfile
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Application Status (credit-approval workflow for rep-submitted customers) */}
+          <div className="px-6 pt-6">
+            <ApplicationStatusSection
+              customerId={customerId}
+              approvalStatus={customer.approval_status}
+              onRefresh={fetchCustomerData}
+            />
           </div>
 
           {/* Metrics */}

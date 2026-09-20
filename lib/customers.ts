@@ -95,6 +95,82 @@ export interface Customer {
   // New fields from API response
   customer_number?: string | null
   account_id?: string | null
+
+  // Company Details (Nescopharm "Credit Appraisal Form" fields)
+  trading_name?: string | null
+  business_type?: string | null // free string, e.g. "pharmacy" | "hospital_clinic" | "distributor" | "ngo" | "other"
+  registration_number?: string | null
+  ppb_license_number?: string | null
+  website?: string | null
+  telephone?: string | null
+  region?: string | null // one of Kenya's 8 former provinces, used to narrow `county`
+  county?: string | null // one of Kenya's 47 counties
+
+  // Accounts Contact - a SEPARATE contact block from the primary
+  // contact_person_* fields above; the paper form has both.
+  accounts_contact_name?: string | null
+  accounts_contact_designation?: string | null
+  accounts_contact_phone?: string | null
+  accounts_contact_email?: string | null
+
+  // Two-stage credit-approval workflow for customers created by Sales Reps in
+  // POS. Normal staff-created customers stay "draft"/"approved" and never go
+  // through this. See CustomerApproval below for the history of decisions.
+  approval_status?:
+    | "draft"
+    | "pending_stage1"
+    | "pending_documents"
+    | "pending_stage2"
+    | "approved"
+    | "rejected"
+    | string
+    | null
+
+  // Credit terms/details captured when the rep submitted the application, for
+  // the Stage 2 reviewer to check against the signed document before giving
+  // final approval. Shape isn't strictly typed on the frontend yet - render
+  // defensively.
+  credit_application?: Record<string, any> | null
+}
+
+// A single director/business owner on the paper "Credit Appraisal Form".
+export interface CreditApplicationDirectorInput {
+  name: string
+  id_passport_number?: string | null
+  pin?: string | null
+  phone_number?: string | null
+}
+
+// A single trade reference/supplier on the paper form.
+export interface CreditApplicationSupplierInput {
+  name: string
+  contact_person_name?: string | null
+  phone_number?: string | null
+  credit_limit?: string | number | null
+}
+
+// A single bank account on the paper form.
+export interface CreditApplicationBankDetailInput {
+  account_name?: string | null
+  bank_name: string
+  branch?: string | null
+  account_number?: string | null
+}
+
+// Strongly-typed shape for the nested `credit_application` object accepted
+// by `POST /customers` (used to build the create payload). Only meaningful
+// - and only sent - when the creating user is a Sales Rep; it maps 1:1 to
+// the paper form's Directors, Trade References, Bank Details, and Credit
+// Terms sections. (`Customer.credit_application` above is the looser
+// readback shape used by the separate approval-review workflow.)
+export interface CreditApplicationInput {
+  annual_turnover?: number | null
+  credit_required?: number | null
+  credit_period_required?: string | null
+  credit_period_pd_cheque_days?: number | null
+  directors?: CreditApplicationDirectorInput[]
+  suppliers?: CreditApplicationSupplierInput[]
+  bank_details?: CreditApplicationBankDetailInput[]
 }
 
 // Company customers store the CONTACT PERSON's name in `name` (see
@@ -451,4 +527,114 @@ export async function fetchCustomerCreditTermsHistory(customerAccountId: string)
     true
   )
   return response.data
+}
+
+
+// ---------------------------------------------------------------------------
+// Two-stage credit-approval workflow (customers created by Sales Reps in POS)
+// ---------------------------------------------------------------------------
+// draft/approved (normal staff-created customers, no workflow)
+// pending_stage1 -> (Stage 1 approve) -> pending_documents
+//   -> (signed doc uploaded) -> pending_stage2 -> (Stage 2 approve) -> approved
+//   -> rejected (from either stage)
+
+export interface CustomerApprovalUser {
+  id: string
+  first_name: string
+  last_name: string
+  email: string
+}
+
+export interface CustomerApproval {
+  id: string
+  customer_id: string
+  approval_type: "stage1" | "stage2"
+  status: "pending" | "approved" | "rejected"
+  approved_by: string | null
+  approved_at: string | null
+  notes: string | null
+  approver: CustomerApprovalUser | null
+  createdBy: CustomerApprovalUser | null
+  created_at: string
+}
+
+// History of Stage 1 / Stage 2 approval decisions for a customer going
+// through the credit-approval workflow.
+export async function getCustomerApprovals(customerId: string): Promise<CustomerApproval[]> {
+  try {
+    const response = await apiCall<{ status: string; data: CustomerApproval[]; message?: string }>(
+      `/customers/${customerId}/approvals`,
+      "GET",
+      undefined,
+      true,
+    )
+    if (response.status === "success" && response.data) {
+      return response.data
+    }
+    return []
+  } catch (error: any) {
+    throw new Error(error.message || "Failed to fetch customer approval history.")
+  }
+}
+
+// Approve or reject whichever stage the customer is currently awaiting. The
+// server determines the stage from the customer's current approval_status -
+// it returns a 400 if the customer isn't currently awaiting approval, and a
+// 422 for Stage 2 if the signed, stamped credit application hasn't been
+// uploaded yet. Both errors should be surfaced to the reviewer as-is.
+export async function submitCustomerApproval(
+  customerId: string,
+  data: { status: "approved" | "rejected"; notes?: string },
+): Promise<{ approval: CustomerApproval; customer: Customer }> {
+  try {
+    const response = await apiCall<{
+      status: string
+      message?: string
+      data: CustomerApproval
+      customer: Customer
+    }>(`/customers/${customerId}/approvals`, "POST", data, true)
+
+    if (response.status === "success" && response.data) {
+      return { approval: response.data, customer: response.customer }
+    } else {
+      throw new Error(typeof response.message === "string" ? response.message : "Failed to submit approval decision.")
+    }
+  } catch (error: any) {
+    throw new Error(error.message || "Failed to submit approval decision.")
+  }
+}
+
+export interface SignedApplicationDocument {
+  id: string
+  document_name: string
+  url?: string
+  [key: string]: any
+}
+
+// Uploads the signed, stamped credit application (scan/photo, any file type,
+// max 5MB). Only works while the customer is in "pending_documents"; on
+// success the customer advances to "pending_stage2".
+export async function uploadSignedCreditApplication(
+  customerId: string,
+  file: File,
+): Promise<{ document: SignedApplicationDocument; customer: Customer }> {
+  try {
+    const formData = new FormData()
+    formData.append("file", file)
+
+    const response = await apiCall<{
+      status: string
+      message?: string
+      document: SignedApplicationDocument
+      customer: Customer
+    }>(`/customers/${customerId}/signed-application`, "POST", formData, true)
+
+    if (response.status === "success" && response.document) {
+      return { document: response.document, customer: response.customer }
+    } else {
+      throw new Error(typeof response.message === "string" ? response.message : "Failed to upload signed application.")
+    }
+  } catch (error: any) {
+    throw new Error(error.message || "Failed to upload signed application.")
+  }
 }

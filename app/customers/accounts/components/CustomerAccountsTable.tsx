@@ -35,6 +35,7 @@ import {
 import { type CustomerAccountWithDetails } from "@/lib/customer-accounts";
 import { CreditLimitRequestModal } from "@/components/modals/credit-limit-request-modal";
 import { CreditLimitApprovalModal } from "@/components/modals/credit-limit-approval-modal";
+import { PermissionGuard } from "@/components/PermissionGuard";
 
 interface CustomerAccountsTableProps {
   accounts: CustomerAccountWithDetails[];
@@ -424,7 +425,7 @@ function ActionsDropdown({
           </>
         )}
         {canApproveOrReject && (
-          <>
+          <PermissionGuard permissions="can_approve_account" hideOnDenied>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={onApprove} className="text-green-600 focus:text-green-600">
               <CheckCircle className="h-4 w-4 mr-2" /> Approve Account
@@ -432,7 +433,7 @@ function ActionsDropdown({
             <DropdownMenuItem onClick={onReject} className="text-red-600 focus:text-red-600">
               <XCircle className="h-4 w-4 mr-2" /> Reject Account
             </DropdownMenuItem>
-          </>
+          </PermissionGuard>
         )}
         {canDelete && (
           <>
