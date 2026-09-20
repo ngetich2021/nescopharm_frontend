@@ -15,8 +15,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
+import { cn } from "@/lib/utils";
 import { 
   User, 
   Mail, 
@@ -26,17 +29,24 @@ import {
   UserPlus,
   Loader2,
   Building,
-  CreditCard
+  CreditCard,
+  Check,
+  ChevronsUpDown,
+  Landmark
 } from "lucide-react";
 import { type Customer, createCustomer } from "@/lib/customers";
 import { type CreateCustomerAccountPayload } from "@/lib/customer-accounts";
 import { DocumentForm, DocumentData } from "./DocumentForm";
 import { uploadDocument } from "@/lib/documents";
+import { KENYA_REGIONS, KENYA_COUNTIES, getCountiesForRegion } from "@/lib/kenya-locations";
 
 interface CreateCustomerModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSuccess: () => void;
+  // Called after a successful create. Receives the newly-created customer
+  // when available (e.g. so a caller like the POS customer selector can
+  // auto-select it) - callers that only need a refresh signal can ignore it.
+  onSuccess: (customer?: Customer) => void;
 }
 
 export function CreateCustomerModal({
@@ -45,7 +55,8 @@ export function CreateCustomerModal({
   onSuccess,
 }: CreateCustomerModalProps) {
   const { toast } = useToast();
-  const { companyId, isLoading: authLoading } = useAuth();
+  const { companyId, isLoading: authLoading, user } = useAuth();
+  const isSalesRep = !!user?.role?.is_sales_rep;
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Form state
@@ -56,7 +67,7 @@ export function CreateCustomerModal({
   const [address, setAddress] = useState("");
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
-  const [country, setCountry] = useState("");
+  const [country, setCountry] = useState("Kenya");
   const [postalCode, setPostalCode] = useState("");
   const [customerType, setCustomerType] = useState("individual");
   const [status, setStatus] = useState("active");
@@ -71,7 +82,34 @@ export function CreateCustomerModal({
   const [contactPersonName, setContactPersonName] = useState("");
   const [contactPersonPhone, setContactPersonPhone] = useState("");
   const [contactPersonEmail, setContactPersonEmail] = useState("");
-  
+
+  // Company Details (Nescopharm "Credit Appraisal Form" fields)
+  const [tradingName, setTradingName] = useState("");
+  const [businessType, setBusinessType] = useState("");
+  const [registrationNumber, setRegistrationNumber] = useState("");
+  const [ppbLicenseNumber, setPpbLicenseNumber] = useState("");
+  const [website, setWebsite] = useState("");
+  const [telephone, setTelephone] = useState("");
+  const [region, setRegion] = useState("");
+  const [county, setCounty] = useState("");
+  const [countyPickerOpen, setCountyPickerOpen] = useState(false);
+
+  // Accounts Contact - a separate contact block from Primary Contact above
+  const [accountsContactName, setAccountsContactName] = useState("");
+  const [accountsContactDesignation, setAccountsContactDesignation] = useState("");
+  const [accountsContactPhone, setAccountsContactPhone] = useState("");
+  const [accountsContactEmail, setAccountsContactEmail] = useState("");
+
+  // Credit Appraisal application (Sales Rep only) - maps to the backend's
+  // nested `credit_application` object accepted on customer creation
+  const [caAnnualTurnover, setCaAnnualTurnover] = useState("");
+  const [caCreditRequired, setCaCreditRequired] = useState("");
+  const [caCreditPeriodRequired, setCaCreditPeriodRequired] = useState("");
+  const [caCreditPeriodPdChequeDays, setCaCreditPeriodPdChequeDays] = useState("");
+  const [caDirectors, setCaDirectors] = useState([{ name: "", idPassportNumber: "", pin: "", phoneNumber: "" }]);
+  const [caSuppliers, setCaSuppliers] = useState([{ name: "", contactPersonName: "", phoneNumber: "", creditLimit: "" }]);
+  const [caBankDetails, setCaBankDetails] = useState([{ accountName: "", bankName: "", branch: "", accountNumber: "" }]);
+
   // Payment method
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const paymentMethodRef = useRef("cash");
@@ -100,7 +138,7 @@ export function CreateCustomerModal({
     setAddress("");
     setCity("");
     setState("");
-    setCountry("");
+    setCountry("Kenya");
     setPostalCode("");
     setCustomerType("individual");
     setStatus("active");
@@ -115,7 +153,32 @@ export function CreateCustomerModal({
     setContactPersonName("");
     setContactPersonPhone("");
     setContactPersonEmail("");
-    
+
+    // Reset Company Details
+    setTradingName("");
+    setBusinessType("");
+    setRegistrationNumber("");
+    setPpbLicenseNumber("");
+    setWebsite("");
+    setTelephone("");
+    setRegion("");
+    setCounty("");
+
+    // Reset Accounts Contact
+    setAccountsContactName("");
+    setAccountsContactDesignation("");
+    setAccountsContactPhone("");
+    setAccountsContactEmail("");
+
+    // Reset Credit Appraisal application
+    setCaAnnualTurnover("");
+    setCaCreditRequired("");
+    setCaCreditPeriodRequired("");
+    setCaCreditPeriodPdChequeDays("");
+    setCaDirectors([{ name: "", idPassportNumber: "", pin: "", phoneNumber: "" }]);
+    setCaSuppliers([{ name: "", contactPersonName: "", phoneNumber: "", creditLimit: "" }]);
+    setCaBankDetails([{ accountName: "", bankName: "", branch: "", accountNumber: "" }]);
+
     // Reset payment method
     setPaymentMethod("cash");
     paymentMethodRef.current = "cash";
@@ -244,6 +307,54 @@ export function CreateCustomerModal({
       }
     }
 
+    // Validate Credit Appraisal application fields (Sales Rep only)
+    if (isSalesRep) {
+      const hasCaDirectors = caDirectors.some(d => d.name || d.idPassportNumber || d.pin || d.phoneNumber);
+      if (hasCaDirectors) {
+        for (let i = 0; i < caDirectors.length; i++) {
+          const director = caDirectors[i];
+          if ((director.name || director.idPassportNumber || director.pin || director.phoneNumber) && !director.name.trim()) {
+            toast({
+              title: "Validation Error",
+              description: `Director ${i + 1}: Name is required`,
+              variant: "destructive",
+            });
+            return false;
+          }
+        }
+      }
+
+      const hasCaSuppliers = caSuppliers.some(s => s.name || s.contactPersonName || s.phoneNumber || s.creditLimit);
+      if (hasCaSuppliers) {
+        for (let i = 0; i < caSuppliers.length; i++) {
+          const supplier = caSuppliers[i];
+          if ((supplier.name || supplier.contactPersonName || supplier.phoneNumber || supplier.creditLimit) && !supplier.name.trim()) {
+            toast({
+              title: "Validation Error",
+              description: `Trade Reference ${i + 1}: Name is required`,
+              variant: "destructive",
+            });
+            return false;
+          }
+        }
+      }
+
+      const hasCaBankDetails = caBankDetails.some(b => b.accountName || b.bankName || b.branch || b.accountNumber);
+      if (hasCaBankDetails) {
+        for (let i = 0; i < caBankDetails.length; i++) {
+          const bank = caBankDetails[i];
+          if ((bank.accountName || bank.bankName || bank.branch || bank.accountNumber) && !bank.bankName.trim()) {
+            toast({
+              title: "Validation Error",
+              description: `Bank Detail ${i + 1}: Bank name is required`,
+              variant: "destructive",
+            });
+            return false;
+          }
+        }
+      }
+    }
+
     // Validate documents if any are added
     for (let i = 0; i < documents.length; i++) {
       const doc = documents[i];
@@ -305,7 +416,19 @@ export function CreateCustomerModal({
       currentPinNumber: pinNumber,
       currentContactPersonName: contactPersonName,
       currentContactPersonPhone: contactPersonPhone,
-      currentContactPersonEmail: contactPersonEmail
+      currentContactPersonEmail: contactPersonEmail,
+      currentTradingName: tradingName,
+      currentBusinessType: businessType,
+      currentRegistrationNumber: registrationNumber,
+      currentPpbLicenseNumber: ppbLicenseNumber,
+      currentWebsite: website,
+      currentTelephone: telephone,
+      currentRegion: region,
+      currentCounty: county,
+      currentAccountsContactName: accountsContactName,
+      currentAccountsContactDesignation: accountsContactDesignation,
+      currentAccountsContactPhone: accountsContactPhone,
+      currentAccountsContactEmail: accountsContactEmail,
     };
     
 
@@ -328,6 +451,8 @@ export function CreateCustomerModal({
         state: submissionData.currentState.trim() || null,
         country: submissionData.currentCountry.trim() || null,
         postal_code: submissionData.currentPostalCode.trim() || null,
+        region: submissionData.currentRegion || null,
+        county: submissionData.currentCounty || null,
         customer_type: submissionData.currentCustomerType || null,
         preferred_communication_channel: submissionData.currentPreferredCommunication || null,
         last_contact_date: null,
@@ -341,11 +466,57 @@ export function CreateCustomerModal({
         customerData = {
           ...customerData,
           business_name: submissionData.currentBusinessName.trim() || null,
+          trading_name: submissionData.currentTradingName.trim() || null,
+          business_type: submissionData.currentBusinessType || null,
+          registration_number: submissionData.currentRegistrationNumber.trim() || null,
+          ppb_license_number: submissionData.currentPpbLicenseNumber.trim() || null,
+          website: submissionData.currentWebsite.trim() || null,
+          telephone: submissionData.currentTelephone.trim() || null,
           nature_of_business: submissionData.currentNatureOfBusiness.trim() || null,
           pin_number: submissionData.currentPinNumber.trim() || null,
           contact_person_name: submissionData.currentContactPersonName.trim() || null,
           contact_person_phone: submissionData.currentContactPersonPhone.trim() || null,
           contact_person_email: submissionData.currentContactPersonEmail.trim() || null,
+          accounts_contact_name: submissionData.currentAccountsContactName.trim() || null,
+          accounts_contact_designation: submissionData.currentAccountsContactDesignation.trim() || null,
+          accounts_contact_phone: submissionData.currentAccountsContactPhone.trim() || null,
+          accounts_contact_email: submissionData.currentAccountsContactEmail.trim() || null,
+        };
+      }
+
+      // Only Sales Reps submit the paper "Credit Appraisal Form" data - the
+      // backend uses its presence (plus the creating user's role) to route
+      // the customer into the two-stage approval workflow.
+      if (isSalesRep) {
+        customerData.credit_application = {
+          annual_turnover: caAnnualTurnover ? parseFloat(caAnnualTurnover) : null,
+          credit_required: caCreditRequired ? parseFloat(caCreditRequired) : null,
+          credit_period_required: caCreditPeriodRequired.trim() || null,
+          credit_period_pd_cheque_days: caCreditPeriodPdChequeDays ? parseInt(caCreditPeriodPdChequeDays, 10) : null,
+          directors: caDirectors
+            .filter(d => d.name.trim() !== "")
+            .map(d => ({
+              name: d.name,
+              id_passport_number: d.idPassportNumber || null,
+              pin: d.pin || null,
+              phone_number: d.phoneNumber || null,
+            })),
+          suppliers: caSuppliers
+            .filter(s => s.name.trim() !== "")
+            .map(s => ({
+              name: s.name,
+              contact_person_name: s.contactPersonName || null,
+              phone_number: s.phoneNumber || null,
+              credit_limit: s.creditLimit || null,
+            })),
+          bank_details: caBankDetails
+            .filter(b => b.bankName.trim() !== "")
+            .map(b => ({
+              account_name: b.accountName || null,
+              bank_name: b.bankName,
+              branch: b.branch || null,
+              account_number: b.accountNumber || null,
+            })),
         };
       }
 
@@ -359,14 +530,21 @@ export function CreateCustomerModal({
         await createCustomerAccount(newCustomer.id);
       }
 
-      toast({
-        title: "Success!",
-        description: "Customer created successfully",
-      });
+      if (isSalesRep) {
+        toast({
+          title: "Submitted for Review",
+          description: "The credit appraisal application has been submitted and is pending review. The customer will become available once approved.",
+        });
+      } else {
+        toast({
+          title: "Success!",
+          description: "Customer created successfully",
+        });
+      }
 
       resetForm();
       onOpenChange(false);
-      onSuccess();
+      onSuccess(newCustomer);
     } catch (error: any) {
       console.error("Error in handleSubmit:", error);
       console.error("Error message:", error.message);
@@ -551,6 +729,57 @@ export function CreateCustomerModal({
     setBankDetails(updatedBankDetails);
   };
 
+  // Credit Appraisal - Director management functions
+  const addCaDirector = () => {
+    setCaDirectors([...caDirectors, { name: "", idPassportNumber: "", pin: "", phoneNumber: "" }]);
+  };
+
+  const removeCaDirector = (index: number) => {
+    if (caDirectors.length > 1) {
+      setCaDirectors(caDirectors.filter((_, i) => i !== index));
+    }
+  };
+
+  const updateCaDirector = (index: number, field: string, value: string) => {
+    const updated = [...caDirectors];
+    (updated[index] as any)[field] = value;
+    setCaDirectors(updated);
+  };
+
+  // Credit Appraisal - Trade Reference/Supplier management functions
+  const addCaSupplier = () => {
+    setCaSuppliers([...caSuppliers, { name: "", contactPersonName: "", phoneNumber: "", creditLimit: "" }]);
+  };
+
+  const removeCaSupplier = (index: number) => {
+    if (caSuppliers.length > 1) {
+      setCaSuppliers(caSuppliers.filter((_, i) => i !== index));
+    }
+  };
+
+  const updateCaSupplier = (index: number, field: string, value: string) => {
+    const updated = [...caSuppliers];
+    (updated[index] as any)[field] = value;
+    setCaSuppliers(updated);
+  };
+
+  // Credit Appraisal - Bank Detail management functions
+  const addCaBankDetail = () => {
+    setCaBankDetails([...caBankDetails, { accountName: "", bankName: "", branch: "", accountNumber: "" }]);
+  };
+
+  const removeCaBankDetail = (index: number) => {
+    if (caBankDetails.length > 1) {
+      setCaBankDetails(caBankDetails.filter((_, i) => i !== index));
+    }
+  };
+
+  const updateCaBankDetail = (index: number, field: string, value: string) => {
+    const updated = [...caBankDetails];
+    (updated[index] as any)[field] = value;
+    setCaBankDetails(updated);
+  };
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="sm:max-w-2xl flex flex-col h-full">
@@ -667,17 +896,30 @@ export function CreateCustomerModal({
               
               {customerType === "company" && (
                 <>
-                  <div className="space-y-2">
-                    <Label htmlFor="businessName">Business Name</Label>
-                    <Input
-                      id="businessName"
-                      value={businessName}
-                      onChange={(e) => setBusinessName(e.target.value)}
-                      placeholder="Acme Corporation"
-                      disabled={isSubmitting || authLoading}
-                    />
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="businessName">Business Name</Label>
+                      <Input
+                        id="businessName"
+                        value={businessName}
+                        onChange={(e) => setBusinessName(e.target.value)}
+                        placeholder="Acme Corporation"
+                        disabled={isSubmitting || authLoading}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="tradingName">Trading Name</Label>
+                      <Input
+                        id="tradingName"
+                        value={tradingName}
+                        onChange={(e) => setTradingName(e.target.value)}
+                        placeholder="Acme Pharmacy"
+                        disabled={isSubmitting || authLoading}
+                      />
+                    </div>
                   </div>
-                  
+
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="natureOfBusiness">Nature of Business</Label>
@@ -689,7 +931,25 @@ export function CreateCustomerModal({
                         disabled={isSubmitting || authLoading}
                       />
                     </div>
-                    
+
+                    <div className="space-y-2">
+                      <Label htmlFor="businessType">Business Type</Label>
+                      <Select value={businessType || undefined} onValueChange={setBusinessType} disabled={isSubmitting || authLoading}>
+                        <SelectTrigger id="businessType">
+                          <SelectValue placeholder="Select business type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="pharmacy">Pharmacy</SelectItem>
+                          <SelectItem value="hospital_clinic">Hospital / Clinic</SelectItem>
+                          <SelectItem value="distributor">Distributor</SelectItem>
+                          <SelectItem value="ngo">NGO</SelectItem>
+                          <SelectItem value="other">Other</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="pinNumber">PIN Number</Label>
                       <Input
@@ -700,12 +960,166 @@ export function CreateCustomerModal({
                         disabled={isSubmitting || authLoading}
                       />
                     </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="registrationNumber">Registration Number</Label>
+                      <Input
+                        id="registrationNumber"
+                        value={registrationNumber}
+                        onChange={(e) => setRegistrationNumber(e.target.value)}
+                        placeholder="C123456"
+                        disabled={isSubmitting || authLoading}
+                      />
+                    </div>
                   </div>
-                  
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="ppbLicenseNumber">PPB License Number</Label>
+                      <Input
+                        id="ppbLicenseNumber"
+                        value={ppbLicenseNumber}
+                        onChange={(e) => setPpbLicenseNumber(e.target.value)}
+                        placeholder="PPB/123456"
+                        disabled={isSubmitting || authLoading}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="telephone">Telephone</Label>
+                      <Input
+                        id="telephone"
+                        value={telephone}
+                        onChange={(e) => setTelephone(e.target.value)}
+                        placeholder="+254 20 123 4567"
+                        disabled={isSubmitting || authLoading}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="website">Website</Label>
+                    <Input
+                      id="website"
+                      value={website}
+                      onChange={(e) => setWebsite(e.target.value)}
+                      placeholder="https://www.example.com"
+                      disabled={isSubmitting || authLoading}
+                    />
+                  </div>
                 </>
               )}
             </CardContent>
           </Card>
+
+          {/* Primary Contact */}
+          {customerType === "company" && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <User className="h-5 w-5 text-teal-600" />
+                  Primary Contact
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="contactPersonName">Contact Person Name</Label>
+                    <Input
+                      id="contactPersonName"
+                      value={contactPersonName}
+                      onChange={(e) => setContactPersonName(e.target.value)}
+                      placeholder="Jane Doe"
+                      disabled={isSubmitting || authLoading}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="contactPersonPhone">Contact Person Phone</Label>
+                    <Input
+                      id="contactPersonPhone"
+                      value={contactPersonPhone}
+                      onChange={(e) => setContactPersonPhone(e.target.value)}
+                      placeholder="+254 700 123 456"
+                      disabled={isSubmitting || authLoading}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="contactPersonEmail">Contact Person Email</Label>
+                    <Input
+                      id="contactPersonEmail"
+                      type="email"
+                      value={contactPersonEmail}
+                      onChange={(e) => setContactPersonEmail(e.target.value)}
+                      placeholder="jane.doe@example.com"
+                      disabled={isSubmitting || authLoading}
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Accounts Contact - a separate contact block from Primary Contact above */}
+          {customerType === "company" && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Phone className="h-5 w-5 text-teal-600" />
+                  Accounts Contact
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="accountsContactName">Name</Label>
+                    <Input
+                      id="accountsContactName"
+                      value={accountsContactName}
+                      onChange={(e) => setAccountsContactName(e.target.value)}
+                      placeholder="John Accountant"
+                      disabled={isSubmitting || authLoading}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="accountsContactDesignation">Designation</Label>
+                    <Input
+                      id="accountsContactDesignation"
+                      value={accountsContactDesignation}
+                      onChange={(e) => setAccountsContactDesignation(e.target.value)}
+                      placeholder="Finance Manager"
+                      disabled={isSubmitting || authLoading}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="accountsContactPhone">Phone</Label>
+                    <Input
+                      id="accountsContactPhone"
+                      value={accountsContactPhone}
+                      onChange={(e) => setAccountsContactPhone(e.target.value)}
+                      placeholder="+254 700 123 456"
+                      disabled={isSubmitting || authLoading}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="accountsContactEmail">Email</Label>
+                    <Input
+                      id="accountsContactEmail"
+                      type="email"
+                      value={accountsContactEmail}
+                      onChange={(e) => setAccountsContactEmail(e.target.value)}
+                      placeholder="accounts@example.com"
+                      disabled={isSubmitting || authLoading}
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Address Information */}
           <Card>
@@ -762,6 +1176,70 @@ export function CreateCustomerModal({
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="region">Region</Label>
+                  <Select
+                    value={region || undefined}
+                    onValueChange={(value) => {
+                      setRegion(value);
+                      setCounty("");
+                    }}
+                    disabled={isSubmitting || authLoading}
+                  >
+                    <SelectTrigger id="region">
+                      <SelectValue placeholder="Select region" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {KENYA_REGIONS.map((r) => (
+                        <SelectItem key={r.name} value={r.name}>{r.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="county">County</Label>
+                  <Popover open={countyPickerOpen} onOpenChange={setCountyPickerOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={countyPickerOpen}
+                        className="w-full justify-between font-normal"
+                        disabled={isSubmitting || authLoading}
+                      >
+                        {county || "Select county"}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Search counties..." />
+                        <CommandList>
+                          <CommandEmpty>No county found.</CommandEmpty>
+                          <CommandGroup>
+                            {(region ? getCountiesForRegion(region) : KENYA_COUNTIES).map((c) => (
+                              <CommandItem
+                                key={c}
+                                value={c}
+                                onSelect={() => {
+                                  setCounty(c);
+                                  setCountyPickerOpen(false);
+                                }}
+                              >
+                                <Check className={cn("mr-2 h-4 w-4", county === c ? "opacity-100" : "opacity-0")} />
+                                {c}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="postalCode">Postal Code</Label>
                 <Input
@@ -776,7 +1254,14 @@ export function CreateCustomerModal({
             </CardContent>
           </Card>
 
-          {/* Payment Method */}
+          {/*
+            Payment Method / immediate credit-account setup - Sales Reps must
+            go through the two-stage Credit Appraisal application below
+            instead (selecting "Credit" here would create a CustomerAccount
+            immediately, bypassing that gate entirely). Staff creating a
+            customer directly keep this unchanged.
+          */}
+          {!isSalesRep && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -902,6 +1387,320 @@ export function CreateCustomerModal({
               )}
             </CardContent>
           </Card>
+          )}
+
+          {/* Credit Appraisal - Sales Rep submission (paper "Credit Appraisal Form") */}
+          {isSalesRep && (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <CreditCard className="h-5 w-5 text-rose-600" />
+                    Credit Appraisal - Credit Terms
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-xs text-muted-foreground">
+                    This application will be submitted for review before the customer becomes active.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="caAnnualTurnover">Annual Turnover (KES)</Label>
+                      <Input
+                        id="caAnnualTurnover"
+                        type="number"
+                        value={caAnnualTurnover}
+                        onChange={(e) => setCaAnnualTurnover(e.target.value)}
+                        placeholder="1000000"
+                        disabled={isSubmitting || authLoading}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="caCreditRequired">Credit Required (KES)</Label>
+                      <Input
+                        id="caCreditRequired"
+                        type="number"
+                        value={caCreditRequired}
+                        onChange={(e) => setCaCreditRequired(e.target.value)}
+                        placeholder="50000"
+                        disabled={isSubmitting || authLoading}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="caCreditPeriodRequired">Credit Period Required</Label>
+                      <Input
+                        id="caCreditPeriodRequired"
+                        value={caCreditPeriodRequired}
+                        onChange={(e) => setCaCreditPeriodRequired(e.target.value)}
+                        placeholder="30 days"
+                        disabled={isSubmitting || authLoading}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="caCreditPeriodPdChequeDays">Post-Dated Cheque Period (Days)</Label>
+                      <Input
+                        id="caCreditPeriodPdChequeDays"
+                        type="number"
+                        min="0"
+                        max="365"
+                        value={caCreditPeriodPdChequeDays}
+                        onChange={(e) => setCaCreditPeriodPdChequeDays(e.target.value)}
+                        placeholder="e.g. 30"
+                        disabled={isSubmitting || authLoading}
+                      />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Building className="h-5 w-5 text-rose-600" />
+                    Credit Appraisal - Business Owners / Directors
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {caDirectors.map((director, index) => (
+                    <div key={index} className="space-y-4 p-4 border border-gray-200 rounded-lg">
+                      <div className="flex justify-between items-center">
+                        <h3 className="font-medium">Director {index + 1}</h3>
+                        {caDirectors.length > 1 && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => removeCaDirector(index)}
+                            disabled={isSubmitting || authLoading}
+                          >
+                            Remove
+                          </Button>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Name *</Label>
+                          <Input
+                            value={director.name}
+                            onChange={(e) => updateCaDirector(index, "name", e.target.value)}
+                            placeholder="Director name"
+                            disabled={isSubmitting || authLoading}
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>ID/Passport Number</Label>
+                          <Input
+                            value={director.idPassportNumber}
+                            onChange={(e) => updateCaDirector(index, "idPassportNumber", e.target.value)}
+                            placeholder="A1234567"
+                            disabled={isSubmitting || authLoading}
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>PIN</Label>
+                          <Input
+                            value={director.pin}
+                            onChange={(e) => updateCaDirector(index, "pin", e.target.value)}
+                            placeholder="D123456"
+                            disabled={isSubmitting || authLoading}
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Phone Number</Label>
+                          <Input
+                            value={director.phoneNumber}
+                            onChange={(e) => updateCaDirector(index, "phoneNumber", e.target.value)}
+                            placeholder="0712345678"
+                            disabled={isSubmitting || authLoading}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={addCaDirector}
+                    disabled={isSubmitting || authLoading}
+                    className="w-full"
+                  >
+                    Add Director
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Building className="h-5 w-5 text-rose-600" />
+                    Credit Appraisal - Trade References / Suppliers
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {caSuppliers.map((supplier, index) => (
+                    <div key={index} className="space-y-4 p-4 border border-gray-200 rounded-lg">
+                      <div className="flex justify-between items-center">
+                        <h3 className="font-medium">Trade Reference {index + 1}</h3>
+                        {caSuppliers.length > 1 && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => removeCaSupplier(index)}
+                            disabled={isSubmitting || authLoading}
+                          >
+                            Remove
+                          </Button>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Name *</Label>
+                          <Input
+                            value={supplier.name}
+                            onChange={(e) => updateCaSupplier(index, "name", e.target.value)}
+                            placeholder="Supplier name"
+                            disabled={isSubmitting || authLoading}
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Contact Person Name</Label>
+                          <Input
+                            value={supplier.contactPersonName}
+                            onChange={(e) => updateCaSupplier(index, "contactPersonName", e.target.value)}
+                            placeholder="Contact person name"
+                            disabled={isSubmitting || authLoading}
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Phone Number</Label>
+                          <Input
+                            value={supplier.phoneNumber}
+                            onChange={(e) => updateCaSupplier(index, "phoneNumber", e.target.value)}
+                            placeholder="0712345678"
+                            disabled={isSubmitting || authLoading}
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Credit Limit (KES)</Label>
+                          <Input
+                            type="number"
+                            value={supplier.creditLimit}
+                            onChange={(e) => updateCaSupplier(index, "creditLimit", e.target.value)}
+                            placeholder="20000"
+                            disabled={isSubmitting || authLoading}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={addCaSupplier}
+                    disabled={isSubmitting || authLoading}
+                    className="w-full"
+                  >
+                    Add Trade Reference
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Landmark className="h-5 w-5 text-rose-600" />
+                    Credit Appraisal - Bank Details
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {caBankDetails.map((bank, index) => (
+                    <div key={index} className="space-y-4 p-4 border border-gray-200 rounded-lg">
+                      <div className="flex justify-between items-center">
+                        <h3 className="font-medium">Bank Account {index + 1}</h3>
+                        {caBankDetails.length > 1 && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => removeCaBankDetail(index)}
+                            disabled={isSubmitting || authLoading}
+                          >
+                            Remove
+                          </Button>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Account Name</Label>
+                          <Input
+                            value={bank.accountName}
+                            onChange={(e) => updateCaBankDetail(index, "accountName", e.target.value)}
+                            placeholder="Acme Corporation Ltd"
+                            disabled={isSubmitting || authLoading}
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Bank Name *</Label>
+                          <Input
+                            value={bank.bankName}
+                            onChange={(e) => updateCaBankDetail(index, "bankName", e.target.value)}
+                            placeholder="Bank of Africa"
+                            disabled={isSubmitting || authLoading}
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Branch</Label>
+                          <Input
+                            value={bank.branch}
+                            onChange={(e) => updateCaBankDetail(index, "branch", e.target.value)}
+                            placeholder="Westlands"
+                            disabled={isSubmitting || authLoading}
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Account Number</Label>
+                          <Input
+                            value={bank.accountNumber}
+                            onChange={(e) => updateCaBankDetail(index, "accountNumber", e.target.value)}
+                            placeholder="1234567890"
+                            disabled={isSubmitting || authLoading}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={addCaBankDetail}
+                    disabled={isSubmitting || authLoading}
+                    className="w-full"
+                  >
+                    Add Bank Account
+                  </Button>
+                </CardContent>
+              </Card>
+            </>
+          )}
 
           {/* Directors Information (for credit accounts) */}
           {paymentMethod === "credit" && customerType === "company" && (

@@ -3,14 +3,14 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { User, Plus, Search } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/lib/auth-context"
 import type { Customer } from "@/lib/customers"
-import { getCustomers, createCustomer, getCustomerDisplayName } from "@/lib/customers"
+import { getCustomers, getCustomerDisplayName } from "@/lib/customers"
 import { usePermissions } from "@/hooks/use-permissions"
+import { CreateCustomerModal } from "@/app/customers/components/CreateCustomerModal"
 
 interface CustomerSelectorProps {
   selectedCustomer: Customer | null
@@ -23,15 +23,9 @@ export function CustomerSelector({ selectedCustomer, onCustomerSelect }: Custome
   const [searchTerm, setSearchTerm] = useState("")
   const [customers, setCustomers] = useState<Customer[]>([])
   const [isLoading, setIsLoading] = useState(false)
-  const [isCreating, setIsCreating] = useState(false)
   const { toast } = useToast()
   const { companyId } = useAuth()
   const { hasPermission } = usePermissions()
-  const [newCustomer, setNewCustomer] = useState({
-    name: "",
-    email: "",
-    phone: "",
-  })
 
   // Check if user has permission to view customers
   const canViewCustomers = hasPermission("can_view_customers")
@@ -70,63 +64,6 @@ export function CustomerSelector({ selectedCustomer, onCustomerSelect }: Custome
   const handleCustomerSelect = (customer: Customer) => {
     onCustomerSelect(customer)
     setShowCustomerModal(false)
-  }
-
-  const handleCreateCustomer = async () => {
-    if (!newCustomer.name.trim()) {
-      toast({
-        title: "Error",
-        description: "Customer name is required",
-        variant: "destructive",
-      })
-      return
-    }
-
-    setIsCreating(true)
-    try {
-      // Prepare customer data without company_id - it will be handled by the backend
-      const customerData = {
-        name: newCustomer.name,
-        email: newCustomer.email || null,
-        phone: newCustomer.phone || null,
-        address: null,
-        city: null,
-        state: null,
-        country: null,
-        postal_code: null,
-        company: null,
-        preferred_communication_channel: null,
-        last_contact_date: null,
-        customer_type: null,
-        // These fields are no longer collected via form, assuming backend handles defaults or they are not required
-        first_name: newCustomer.name.split(" ")[0] || "", // Derive first_name from name
-        last_name: newCustomer.name.split(" ").slice(1).join(" ") || "", // Derive last_name from name
-        tags: [],
-        notes: null,
-        // company_id is intentionally omitted - will be handled by the backend
-      };
-
-      const customer = await createCustomer(customerData as any)
-
-      // Add the new customer to the list and select it
-      setCustomers(prev => [customer, ...prev])
-      onCustomerSelect(customer)
-      setNewCustomer({ name: "", email: "", phone: "" })
-      setShowNewCustomerModal(false)
-      
-      toast({
-        title: "Success",
-        description: "Customer created successfully",
-      })
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to create customer",
-        variant: "destructive",
-      })
-    } finally {
-      setIsCreating(false)
-    }
   }
 
   const walkInCustomer: Customer = {
@@ -246,59 +183,39 @@ export function CustomerSelector({ selectedCustomer, onCustomerSelect }: Custome
             </DialogContent>
           </Dialog>
 
-          <Dialog open={showNewCustomerModal} onOpenChange={setShowNewCustomerModal}>
-            <DialogTrigger asChild>
-              <Button variant="outline" className="w-full justify-start bg-transparent">
-                <Plus className="h-4 w-4 mr-2" />
-                New Customer
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-md">
-              <DialogHeader>
-                <DialogTitle>Add New Customer</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="name">Name *</Label>
-                  <Input
-                    id="name"
-                    value={newCustomer.name}
-                    onChange={(e) => setNewCustomer((prev) => ({ ...prev, name: e.target.value }))}
-                    placeholder="Customer name"
-                  />
-                </div>
+          {/*
+            Reps creating a customer here need the fuller Credit Appraisal
+            capture form (Company Details, Accounts Contact, and - only for
+            Sales Reps - the Directors/Trade References/Bank Details/Credit
+            Terms application), so this reuses the same CreateCustomerModal
+            used on the Customers page rather than a stripped-down inline
+            form. It renders its own Sheet, so it's a sibling here rather
+            than nested inside the "Select Customer" Dialog above.
+          */}
+          <Button
+            variant="outline"
+            className="w-full justify-start bg-transparent"
+            onClick={() => setShowNewCustomerModal(true)}
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            New Customer
+          </Button>
 
-                <div>
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={newCustomer.email}
-                    onChange={(e) => setNewCustomer((prev) => ({ ...prev, email: e.target.value }))}
-                    placeholder="customer@example.com"
-                  />
-                </div>
-
-                <div>
-                  <Label htmlFor="phone">Phone</Label>
-                  <Input
-                    id="phone"
-                    value={newCustomer.phone}
-                    onChange={(e) => setNewCustomer((prev) => ({ ...prev, phone: e.target.value }))}
-                    placeholder="+1234567890"
-                  />
-                </div>
-
-                <Button 
-                  onClick={handleCreateCustomer} 
-                  className="w-full" 
-                  disabled={!newCustomer.name.trim() || isCreating}
-                >
-                  {isCreating ? "Creating..." : "Add Customer"}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+          <CreateCustomerModal
+            open={showNewCustomerModal}
+            onOpenChange={setShowNewCustomerModal}
+            onSuccess={(customer) => {
+              if (!customer) return
+              setCustomers((prev) => [customer, ...prev])
+              // A Sales Rep's submission is pending review and stays hidden
+              // from normal customer pickers/search until approved - don't
+              // auto-select it into the current sale, just let the modal's
+              // own "submitted for review" confirmation stand.
+              if (customer.approval_status !== "pending_stage1") {
+                onCustomerSelect(customer)
+              }
+            }}
+          />
         </div>
       )}
     </div>

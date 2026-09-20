@@ -15,8 +15,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
+import { cn } from "@/lib/utils";
 import { 
   User, 
   Mail, 
@@ -26,12 +29,15 @@ import {
   FileText,
   Save,
   Loader2,
-  CreditCard
+  CreditCard,
+  Check,
+  ChevronsUpDown
 } from "lucide-react";
 import { DocumentForm, DocumentData } from "./DocumentForm";
 import { type Customer, updateCustomer, getCustomerDisplayName } from "@/lib/customers";
 import { getDocuments, uploadDocument } from "@/lib/documents";
 import { getCustomerAccount, updateCustomerAccount, type CreateCustomerAccountPayload } from "@/lib/customer-accounts";
+import { KENYA_REGIONS, KENYA_COUNTIES, getCountiesForRegion } from "@/lib/kenya-locations";
 
 interface EditCustomerModalProps {
   open: boolean;
@@ -48,6 +54,12 @@ export function EditCustomerModal({
 }: EditCustomerModalProps) {
   const { toast } = useToast();
   const { companyId } = useAuth();
+  // A customer still going through the two-stage credit-approval workflow
+  // must never get a CustomerAccount created through the legacy "Payment
+  // Method: Credit" path below - that would bypass/conflict with the
+  // account the workflow auto-creates on Stage 1 approval.
+  const isPendingWorkflow = !!customer?.approval_status &&
+    ["pending_stage1", "pending_documents", "pending_stage2"].includes(customer.approval_status);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [documents, setDocuments] = useState<DocumentData[]>([]);
   const [isLoadingAccount, setIsLoadingAccount] = useState(false);
@@ -75,7 +87,24 @@ export function EditCustomerModal({
   const [contactPersonName, setContactPersonName] = useState("");
   const [contactPersonPhone, setContactPersonPhone] = useState("");
   const [contactPersonEmail, setContactPersonEmail] = useState("");
-  
+
+  // Company Details (Nescopharm "Credit Appraisal Form" fields)
+  const [tradingName, setTradingName] = useState("");
+  const [businessType, setBusinessType] = useState("");
+  const [registrationNumber, setRegistrationNumber] = useState("");
+  const [ppbLicenseNumber, setPpbLicenseNumber] = useState("");
+  const [website, setWebsite] = useState("");
+  const [telephone, setTelephone] = useState("");
+  const [region, setRegion] = useState("");
+  const [county, setCounty] = useState("");
+  const [countyPickerOpen, setCountyPickerOpen] = useState(false);
+
+  // Accounts Contact - a separate contact block from Primary Contact above
+  const [accountsContactName, setAccountsContactName] = useState("");
+  const [accountsContactDesignation, setAccountsContactDesignation] = useState("");
+  const [accountsContactPhone, setAccountsContactPhone] = useState("");
+  const [accountsContactEmail, setAccountsContactEmail] = useState("");
+
   // Payment method
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const paymentMethodRef = useRef("cash");
@@ -137,7 +166,23 @@ export function EditCustomerModal({
       setContactPersonName(customer.contact_person_name || "");
       setContactPersonPhone(customer.contact_person_phone || "");
       setContactPersonEmail(customer.contact_person_email || "");
-      
+
+      // Load Company Details
+      setTradingName(customer.trading_name || "");
+      setBusinessType(customer.business_type || "");
+      setRegistrationNumber(customer.registration_number || "");
+      setPpbLicenseNumber(customer.ppb_license_number || "");
+      setWebsite(customer.website || "");
+      setTelephone(customer.telephone || "");
+      setRegion(customer.region || "");
+      setCounty(customer.county || "");
+
+      // Load Accounts Contact
+      setAccountsContactName(customer.accounts_contact_name || "");
+      setAccountsContactDesignation(customer.accounts_contact_designation || "");
+      setAccountsContactPhone(customer.accounts_contact_phone || "");
+      setAccountsContactEmail(customer.accounts_contact_email || "");
+
       // Load payment method
       const method = customer.payment_method || "cash";
       setPaymentMethod(method);
@@ -281,6 +326,18 @@ export function EditCustomerModal({
     setContactPersonName("");
     setContactPersonPhone("");
     setContactPersonEmail("");
+    setTradingName("");
+    setBusinessType("");
+    setRegistrationNumber("");
+    setPpbLicenseNumber("");
+    setWebsite("");
+    setTelephone("");
+    setRegion("");
+    setCounty("");
+    setAccountsContactName("");
+    setAccountsContactDesignation("");
+    setAccountsContactPhone("");
+    setAccountsContactEmail("");
     setPaymentMethod("cash");
     paymentMethodRef.current = "cash";
     setDocuments([]);
@@ -442,7 +499,19 @@ export function EditCustomerModal({
       currentPinNumber: pinNumber,
       currentContactPersonName: contactPersonName,
       currentContactPersonPhone: contactPersonPhone,
-      currentContactPersonEmail: contactPersonEmail
+      currentContactPersonEmail: contactPersonEmail,
+      currentTradingName: tradingName,
+      currentBusinessType: businessType,
+      currentRegistrationNumber: registrationNumber,
+      currentPpbLicenseNumber: ppbLicenseNumber,
+      currentWebsite: website,
+      currentTelephone: telephone,
+      currentRegion: region,
+      currentCounty: county,
+      currentAccountsContactName: accountsContactName,
+      currentAccountsContactDesignation: accountsContactDesignation,
+      currentAccountsContactPhone: accountsContactPhone,
+      currentAccountsContactEmail: accountsContactEmail,
     };
 
     try {
@@ -462,6 +531,8 @@ export function EditCustomerModal({
         state: submissionData.currentState.trim() || null,
         country: submissionData.currentCountry.trim() || null,
         postal_code: submissionData.currentPostalCode.trim() || null,
+        region: submissionData.currentRegion || null,
+        county: submissionData.currentCounty || null,
         status: status as "active" | "inactive" | "pending",
         customer_type: (submissionData.currentCustomerType as "individual" | "company") || null,
         preferred_communication_channel: submissionData.currentPreferredCommunication || null,
@@ -475,11 +546,21 @@ export function EditCustomerModal({
         updateData = {
           ...updateData,
           business_name: submissionData.currentBusinessName.trim() || null,
+          trading_name: submissionData.currentTradingName.trim() || null,
+          business_type: submissionData.currentBusinessType || null,
+          registration_number: submissionData.currentRegistrationNumber.trim() || null,
+          ppb_license_number: submissionData.currentPpbLicenseNumber.trim() || null,
+          website: submissionData.currentWebsite.trim() || null,
+          telephone: submissionData.currentTelephone.trim() || null,
           nature_of_business: submissionData.currentNatureOfBusiness.trim() || null,
           pin_number: submissionData.currentPinNumber.trim() || null,
           contact_person_name: submissionData.currentContactPersonName.trim() || null,
           contact_person_phone: submissionData.currentContactPersonPhone.trim() || null,
           contact_person_email: submissionData.currentContactPersonEmail.trim() || null,
+          accounts_contact_name: submissionData.currentAccountsContactName.trim() || null,
+          accounts_contact_designation: submissionData.currentAccountsContactDesignation.trim() || null,
+          accounts_contact_phone: submissionData.currentAccountsContactPhone.trim() || null,
+          accounts_contact_email: submissionData.currentAccountsContactEmail.trim() || null,
         };
       }
 
@@ -488,8 +569,10 @@ export function EditCustomerModal({
       // Upload new documents
       await uploadCustomerDocuments(customer.id);
 
-      // If payment method is credit, update or create customer account
-      if (submissionData.currentPaymentMethod === "credit") {
+      // If payment method is credit, update or create customer account -
+      // never while this customer's application is still mid-workflow (see
+      // isPendingWorkflow), regardless of what payment_method was loaded as.
+      if (submissionData.currentPaymentMethod === "credit" && !isPendingWorkflow) {
         if (customerAccountId) {
           await updateCustomerAccountData(customerAccountId);
         } else {
@@ -860,17 +943,30 @@ export function EditCustomerModal({
               
               {customerType === "company" && (
                 <>
-                  <div className="space-y-2">
-                    <Label htmlFor="businessName">Business Name</Label>
-                    <Input
-                      id="businessName"
-                      value={businessName}
-                      onChange={(e) => setBusinessName(e.target.value)}
-                      placeholder="Acme Corporation"
-                      disabled={isSubmitting || isLoadingAccount}
-                    />
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="businessName">Business Name</Label>
+                      <Input
+                        id="businessName"
+                        value={businessName}
+                        onChange={(e) => setBusinessName(e.target.value)}
+                        placeholder="Acme Corporation"
+                        disabled={isSubmitting || isLoadingAccount}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="tradingName">Trading Name</Label>
+                      <Input
+                        id="tradingName"
+                        value={tradingName}
+                        onChange={(e) => setTradingName(e.target.value)}
+                        placeholder="Acme Pharmacy"
+                        disabled={isSubmitting || isLoadingAccount}
+                      />
+                    </div>
                   </div>
-                  
+
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="natureOfBusiness">Nature of Business</Label>
@@ -882,7 +978,25 @@ export function EditCustomerModal({
                         disabled={isSubmitting || isLoadingAccount}
                       />
                     </div>
-                    
+
+                    <div className="space-y-2">
+                      <Label htmlFor="businessType">Business Type</Label>
+                      <Select value={businessType || undefined} onValueChange={setBusinessType} disabled={isSubmitting || isLoadingAccount}>
+                        <SelectTrigger id="businessType">
+                          <SelectValue placeholder="Select business type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="pharmacy">Pharmacy</SelectItem>
+                          <SelectItem value="hospital_clinic">Hospital / Clinic</SelectItem>
+                          <SelectItem value="distributor">Distributor</SelectItem>
+                          <SelectItem value="ngo">NGO</SelectItem>
+                          <SelectItem value="other">Other</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="pinNumber">PIN Number</Label>
                       <Input
@@ -893,12 +1007,166 @@ export function EditCustomerModal({
                         disabled={isSubmitting || isLoadingAccount}
                       />
                     </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="registrationNumber">Registration Number</Label>
+                      <Input
+                        id="registrationNumber"
+                        value={registrationNumber}
+                        onChange={(e) => setRegistrationNumber(e.target.value)}
+                        placeholder="C123456"
+                        disabled={isSubmitting || isLoadingAccount}
+                      />
+                    </div>
                   </div>
-                  
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="ppbLicenseNumber">PPB License Number</Label>
+                      <Input
+                        id="ppbLicenseNumber"
+                        value={ppbLicenseNumber}
+                        onChange={(e) => setPpbLicenseNumber(e.target.value)}
+                        placeholder="PPB/123456"
+                        disabled={isSubmitting || isLoadingAccount}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="telephone">Telephone</Label>
+                      <Input
+                        id="telephone"
+                        value={telephone}
+                        onChange={(e) => setTelephone(e.target.value)}
+                        placeholder="+254 20 123 4567"
+                        disabled={isSubmitting || isLoadingAccount}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="website">Website</Label>
+                    <Input
+                      id="website"
+                      value={website}
+                      onChange={(e) => setWebsite(e.target.value)}
+                      placeholder="https://www.example.com"
+                      disabled={isSubmitting || isLoadingAccount}
+                    />
+                  </div>
                 </>
               )}
             </CardContent>
           </Card>
+
+          {/* Primary Contact */}
+          {customerType === "company" && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <User className="h-5 w-5 text-teal-600" />
+                  Primary Contact
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="contactPersonName">Contact Person Name</Label>
+                    <Input
+                      id="contactPersonName"
+                      value={contactPersonName}
+                      onChange={(e) => setContactPersonName(e.target.value)}
+                      placeholder="Jane Doe"
+                      disabled={isSubmitting || isLoadingAccount}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="contactPersonPhone">Contact Person Phone</Label>
+                    <Input
+                      id="contactPersonPhone"
+                      value={contactPersonPhone}
+                      onChange={(e) => setContactPersonPhone(e.target.value)}
+                      placeholder="+254 700 123 456"
+                      disabled={isSubmitting || isLoadingAccount}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="contactPersonEmail">Contact Person Email</Label>
+                    <Input
+                      id="contactPersonEmail"
+                      type="email"
+                      value={contactPersonEmail}
+                      onChange={(e) => setContactPersonEmail(e.target.value)}
+                      placeholder="jane.doe@example.com"
+                      disabled={isSubmitting || isLoadingAccount}
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Accounts Contact - a separate contact block from Primary Contact above */}
+          {customerType === "company" && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Phone className="h-5 w-5 text-teal-600" />
+                  Accounts Contact
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="accountsContactName">Name</Label>
+                    <Input
+                      id="accountsContactName"
+                      value={accountsContactName}
+                      onChange={(e) => setAccountsContactName(e.target.value)}
+                      placeholder="John Accountant"
+                      disabled={isSubmitting || isLoadingAccount}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="accountsContactDesignation">Designation</Label>
+                    <Input
+                      id="accountsContactDesignation"
+                      value={accountsContactDesignation}
+                      onChange={(e) => setAccountsContactDesignation(e.target.value)}
+                      placeholder="Finance Manager"
+                      disabled={isSubmitting || isLoadingAccount}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="accountsContactPhone">Phone</Label>
+                    <Input
+                      id="accountsContactPhone"
+                      value={accountsContactPhone}
+                      onChange={(e) => setAccountsContactPhone(e.target.value)}
+                      placeholder="+254 700 123 456"
+                      disabled={isSubmitting || isLoadingAccount}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="accountsContactEmail">Email</Label>
+                    <Input
+                      id="accountsContactEmail"
+                      type="email"
+                      value={accountsContactEmail}
+                      onChange={(e) => setAccountsContactEmail(e.target.value)}
+                      placeholder="accounts@example.com"
+                      disabled={isSubmitting || isLoadingAccount}
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Address Information */}
           <Card>
@@ -955,6 +1223,70 @@ export function EditCustomerModal({
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="region">Region</Label>
+                  <Select
+                    value={region || undefined}
+                    onValueChange={(value) => {
+                      setRegion(value);
+                      setCounty("");
+                    }}
+                    disabled={isSubmitting || isLoadingAccount}
+                  >
+                    <SelectTrigger id="region">
+                      <SelectValue placeholder="Select region" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {KENYA_REGIONS.map((r) => (
+                        <SelectItem key={r.name} value={r.name}>{r.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="county">County</Label>
+                  <Popover open={countyPickerOpen} onOpenChange={setCountyPickerOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={countyPickerOpen}
+                        className="w-full justify-between font-normal"
+                        disabled={isSubmitting || isLoadingAccount}
+                      >
+                        {county || "Select county"}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Search counties..." />
+                        <CommandList>
+                          <CommandEmpty>No county found.</CommandEmpty>
+                          <CommandGroup>
+                            {(region ? getCountiesForRegion(region) : KENYA_COUNTIES).map((c) => (
+                              <CommandItem
+                                key={c}
+                                value={c}
+                                onSelect={() => {
+                                  setCounty(c);
+                                  setCountyPickerOpen(false);
+                                }}
+                              >
+                                <Check className={cn("mr-2 h-4 w-4", county === c ? "opacity-100" : "opacity-0")} />
+                                {c}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="postalCode">Postal Code</Label>
                 <Input
@@ -969,7 +1301,9 @@ export function EditCustomerModal({
             </CardContent>
           </Card>
 
-          {/* Payment Method */}
+          {/* Payment Method - hidden while this customer's application is
+              still mid-workflow (see isPendingWorkflow above) */}
+          {!isPendingWorkflow && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -1102,6 +1436,7 @@ export function EditCustomerModal({
               )}
             </CardContent>
           </Card>
+          )}
 
           {/* Directors Information (for credit accounts) */}
           {paymentMethod === "credit" && customerType === "company" && (
