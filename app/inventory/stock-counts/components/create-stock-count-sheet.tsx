@@ -8,14 +8,17 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Loader2, Search } from "lucide-react"
+import { Loader2, Search, Check, ChevronsUpDown } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { getProducts } from "@/lib/products"
 import { createStockCount } from "@/lib/stock-counts"
 import { getUsers } from "@/lib/users"
 import { getStores } from "@/lib/stores"
+import { cn } from "@/lib/utils"
 import type { StockCount } from "@/app/types"
 import type { Product, ProductVariant } from "@/lib/products"
 import type { UserData } from "@/lib/users"
@@ -54,6 +57,9 @@ export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreate
   const [productSelectionMode, setProductSelectionMode] = useState<"all" | "category" | "manual">("all")
   const [selectedCategory, setSelectedCategory] = useState<string>("")
   const [searchTerm, setSearchTerm] = useState("")
+  const [storeSearchOpen, setStoreSearchOpen] = useState(false)
+  const [userSearchOpen, setUserSearchOpen] = useState(false)
+  const [categorySearchOpen, setCategorySearchOpen] = useState(false)
   const [formState, setFormState] = useState({
     name: "",
     count_type: "cycle_count" as "cycle_count" | "full_count",
@@ -392,29 +398,47 @@ export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreate
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="location">Store/Location *</Label>
-                  <Select
-                    name="location"
-                    value={formState.location}
-                    onValueChange={(value) => setFormState((prev) => ({ ...prev, location: value }))}
-                    required
-                  >
-                    <SelectTrigger id="location">
-                      <SelectValue placeholder="Select store" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {loadingStores ? (
-                        <SelectItem value="loading" disabled>Loading stores...</SelectItem>
-                      ) : stores.length === 0 ? (
-                        <SelectItem value="none" disabled>No stores available</SelectItem>
-                      ) : (
-                        stores.map((store) => (
-                          <SelectItem key={store.id} value={store.id}>
-                            {store.name}
-                          </SelectItem>
-                        ))
-                      )}
-                    </SelectContent>
-                  </Select>
+                  <Popover open={storeSearchOpen} onOpenChange={setStoreSearchOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={storeSearchOpen}
+                        className="w-full justify-between font-normal"
+                        disabled={loadingStores}
+                      >
+                        {loadingStores
+                          ? "Loading stores..."
+                          : formState.location
+                            ? stores.find((store) => store.id === formState.location)?.name
+                            : "Select store"}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Search stores..." />
+                        <CommandList>
+                          <CommandEmpty>No stores found.</CommandEmpty>
+                          <CommandGroup>
+                            {stores.map((store) => (
+                              <CommandItem
+                                key={store.id}
+                                value={store.name}
+                                onSelect={() => {
+                                  setFormState((prev) => ({ ...prev, location: store.id }))
+                                  setStoreSearchOpen(false)
+                                }}
+                              >
+                                <Check className={cn("mr-2 h-4 w-4", formState.location === store.id ? "opacity-100" : "opacity-0")} />
+                                {store.name}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -431,31 +455,70 @@ export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreate
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="assigned_to">Assign To</Label>
-                  <Select
-                    name="assigned_to"
-                    value={formState.assigned_to || "unassigned"}
-                    onValueChange={(value) => setFormState((prev) => ({ ...prev, assigned_to: value === "unassigned" ? "" : value }))}
-                  >
-                    <SelectTrigger id="assigned_to">
-                      <SelectValue placeholder="Select user (optional)" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="unassigned">Unassigned</SelectItem>
-                      {loadingUsers ? (
-                        <SelectItem value="loading" disabled>Loading users...</SelectItem>
-                      ) : users.length === 0 ? (
-                        <SelectItem value="none" disabled>No warehouse in-charge users available</SelectItem>
-                      ) : (
-                        users.map((user) => (
-                          <SelectItem key={user.id} value={user.email}>
-                            {user.first_name && user.last_name
-                              ? `${user.first_name} ${user.last_name} (${user.email})`
-                              : user.email}
-                          </SelectItem>
-                        ))
-                      )}
-                    </SelectContent>
-                  </Select>
+                  <Popover open={userSearchOpen} onOpenChange={setUserSearchOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={userSearchOpen}
+                        className="w-full justify-between font-normal"
+                        disabled={loadingUsers}
+                      >
+                        {loadingUsers
+                          ? "Loading users..."
+                          : formState.assigned_to
+                            ? (() => {
+                                const user = users.find((u) => u.email === formState.assigned_to)
+                                return user
+                                  ? (user.first_name && user.last_name
+                                      ? `${user.first_name} ${user.last_name} (${user.email})`
+                                      : user.email)
+                                  : formState.assigned_to
+                              })()
+                            : "Select user (optional)"}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Search users..." />
+                        <CommandList>
+                          <CommandEmpty>
+                            {loadingUsers ? "Loading users..." : "No warehouse in-charge users available."}
+                          </CommandEmpty>
+                          <CommandGroup>
+                            <CommandItem
+                              value="unassigned"
+                              onSelect={() => {
+                                setFormState((prev) => ({ ...prev, assigned_to: "" }))
+                                setUserSearchOpen(false)
+                              }}
+                            >
+                              <Check className={cn("mr-2 h-4 w-4", !formState.assigned_to ? "opacity-100" : "opacity-0")} />
+                              Unassigned
+                            </CommandItem>
+                            {users.map((user) => (
+                              <CommandItem
+                                key={user.id}
+                                value={user.first_name && user.last_name
+                                  ? `${user.first_name} ${user.last_name} ${user.email}`
+                                  : user.email}
+                                onSelect={() => {
+                                  setFormState((prev) => ({ ...prev, assigned_to: user.email }))
+                                  setUserSearchOpen(false)
+                                }}
+                              >
+                                <Check className={cn("mr-2 h-4 w-4", formState.assigned_to === user.email ? "opacity-100" : "opacity-0")} />
+                                {user.first_name && user.last_name
+                                  ? `${user.first_name} ${user.last_name} (${user.email})`
+                                  : user.email}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
               </div>
             </CardContent>
@@ -514,22 +577,44 @@ export function CreateStockCountSheet({ isOpen, onOpenChange, onStockCountCreate
               {productSelectionMode === "category" && (
                 <div className="space-y-2">
                   <Label htmlFor="category">Select Category *</Label>
-                  <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                    <SelectTrigger id="category">
-                      <SelectValue placeholder="Choose a category" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {categories.length === 0 ? (
-                        <SelectItem value="none" disabled>No categories available</SelectItem>
-                      ) : (
-                        categories.map((category) => (
-                          <SelectItem key={category} value={category}>
-                            {category} ({countLines.filter((l) => l.categoryName === category).length} items)
-                          </SelectItem>
-                        ))
-                      )}
-                    </SelectContent>
-                  </Select>
+                  <Popover open={categorySearchOpen} onOpenChange={setCategorySearchOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={categorySearchOpen}
+                        className="w-full justify-between font-normal"
+                      >
+                        {selectedCategory
+                          ? `${selectedCategory} (${countLines.filter((l) => l.categoryName === selectedCategory).length} items)`
+                          : "Choose a category"}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Search categories..." />
+                        <CommandList>
+                          <CommandEmpty>No categories available.</CommandEmpty>
+                          <CommandGroup>
+                            {categories.map((category) => (
+                              <CommandItem
+                                key={category}
+                                value={category}
+                                onSelect={() => {
+                                  setSelectedCategory(category)
+                                  setCategorySearchOpen(false)
+                                }}
+                              >
+                                <Check className={cn("mr-2 h-4 w-4", selectedCategory === category ? "opacity-100" : "opacity-0")} />
+                                {category} ({countLines.filter((l) => l.categoryName === category).length} items)
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
               )}
 

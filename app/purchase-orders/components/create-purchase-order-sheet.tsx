@@ -7,8 +7,9 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Loader2, Plus, X, Package, Building2, Calendar, Store, MessageSquare, Trash2, UserPlus } from "lucide-react"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { Loader2, Plus, X, Package, Building2, Calendar, Store, MessageSquare, Trash2, UserPlus, Check, ChevronsUpDown } from "lucide-react"
 import { createPurchaseOrder, CreatePurchaseOrderPayload, PurchaseOrderItem } from "@/lib/purchaseorders"
 import { getSuppliers, createSupplier, Supplier } from "@/lib/suppliers"
 import { getProducts, Product as BaseProduct } from "@/lib/products"
@@ -17,7 +18,7 @@ import { useToast } from "@/hooks/use-toast"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Badge } from "@/components/ui/badge"
-import { formatCurrency } from "@/lib/utils"
+import { formatCurrency, cn } from "@/lib/utils"
 
 interface CreatePurchaseOrderSheetProps {
   open: boolean
@@ -54,11 +55,11 @@ export function CreatePurchaseOrderSheet({ open, onOpenChange, onPurchaseOrderCr
   const [products, setProducts] = useState<ProductWithVariants[]>([])
   const [loadingSuppliers, setLoadingSuppliers] = useState(false)
   const [loadingProducts, setLoadingProducts] = useState(false)
-  const [supplierSearch, setSupplierSearch] = useState("")
-  const [productSearch, setProductSearch] = useState("")
+  const [supplierSearchOpen, setSupplierSearchOpen] = useState(false)
+  const [productSearchOpen, setProductSearchOpen] = useState(false)
   const [stores, setStores] = useState<any[]>([])
   const [storeId, setStoreId] = useState("")
-  const [storeSearch, setStoreSearch] = useState("")
+  const [storeSearchOpen, setStoreSearchOpen] = useState(false)
   const [comments, setComments] = useState("")
   const [shippingCost, setShippingCost] = useState("")
   const [logisticsCost, setLogisticsCost] = useState("")
@@ -361,59 +362,66 @@ export function CreatePurchaseOrderSheet({ open, onOpenChange, onPurchaseOrderCr
                   <div className="space-y-2">
                     <Label htmlFor="supplier_id" className="text-sm font-medium">Supplier *</Label>
                     <div className="flex gap-2">
-                      <Select
-                        value={formData.supplier_id}
-                        onValueChange={(value) => handleInputChange("supplier_id", value)}
-                        onOpenChange={() => {
-                          if (suppliers.length === 0) {
+                      <Popover
+                        open={supplierSearchOpen}
+                        onOpenChange={(isOpen) => {
+                          setSupplierSearchOpen(isOpen)
+                          if (isOpen && suppliers.length === 0) {
                             fetchSuppliers()
                           }
-                          setSupplierSearch("")
                         }}
-                        required
                       >
-                        <SelectTrigger className="flex-1 h-10">
-                          <SelectValue placeholder="Select a supplier" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <div className="px-2 py-2">
-                            <Input
-                              placeholder="Search by name, email, or phone"
-                              value={supplierSearch}
-                              onChange={e => setSupplierSearch(e.target.value)}
-                              autoFocus
-                              className="h-9"
-                            />
-                          </div>
-                          {loadingSuppliers ? (
-                            <SelectItem value="loading" disabled>
-                              <div className="flex items-center gap-2">
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                                Loading suppliers...
-                              </div>
-                            </SelectItem>
-                          ) : suppliers.length > 0 ? (
-                            suppliers
-                              .filter((supplier) => {
-                                const search = supplierSearch.toLowerCase();
-                                return (
-                                  (supplier.name?.toLowerCase() || "").includes(search) ||
-                                  (supplier.email?.toLowerCase() || "").includes(search) ||
-                                  (supplier.phone?.toLowerCase() || "").includes(search)
-                                );
-                              })
-                              .map((supplier) => (
-                                <SelectItem key={supplier.id} value={supplier.id}>
-                                  {supplier.name} {supplier.phone ? `• ${supplier.phone}` : ""}
-                                </SelectItem>
-                              ))
-                          ) : (
-                            <SelectItem value="none" disabled>
-                              No suppliers found
-                            </SelectItem>
-                          )}
-                        </SelectContent>
-                      </Select>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={supplierSearchOpen}
+                            className="flex-1 h-10 justify-between font-normal"
+                          >
+                            {formData.supplier_id
+                              ? suppliers.find((supplier) => supplier.id === formData.supplier_id)?.name
+                              : "Select a supplier"}
+                            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                          <Command>
+                            <CommandInput placeholder="Search by name, email, or phone..." />
+                            <CommandList>
+                              {loadingSuppliers ? (
+                                <div className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground">
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                  Loading suppliers...
+                                </div>
+                              ) : (
+                                <>
+                                  <CommandEmpty>No suppliers found</CommandEmpty>
+                                  <CommandGroup>
+                                    {suppliers.map((supplier) => (
+                                      <CommandItem
+                                        key={supplier.id}
+                                        value={`${supplier.name} ${supplier.email || ""} ${supplier.phone || ""}`}
+                                        onSelect={() => {
+                                          handleInputChange("supplier_id", supplier.id)
+                                          setSupplierSearchOpen(false)
+                                        }}
+                                      >
+                                        <Check
+                                          className={cn(
+                                            "mr-2 h-4 w-4",
+                                            formData.supplier_id === supplier.id ? "opacity-100" : "opacity-0"
+                                          )}
+                                        />
+                                        {supplier.name} {supplier.phone ? `• ${supplier.phone}` : ""}
+                                      </CommandItem>
+                                    ))}
+                                  </CommandGroup>
+                                </>
+                              )}
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -470,46 +478,49 @@ export function CreatePurchaseOrderSheet({ open, onOpenChange, onPurchaseOrderCr
                       <Store className="h-3.5 w-3.5 text-muted-foreground" />
                       Destination Store
                     </Label>
-                    <Select
-                      value={storeId}
-                      onValueChange={setStoreId}
-                      onOpenChange={() => setStoreSearch("")}
-                    >
-                      <SelectTrigger className="h-10">
-                        <SelectValue placeholder="Select a store (optional)" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <div className="px-2 py-2">
-                          <Input
-                            placeholder="Search by name, code, or city"
-                            value={storeSearch}
-                            onChange={e => setStoreSearch(e.target.value)}
-                            autoFocus
-                            className="h-9"
-                          />
-                        </div>
-                        {stores.length > 0 ? (
-                          stores
-                            .filter((store) => {
-                              const search = storeSearch.toLowerCase();
-                              return (
-                                (store.name?.toLowerCase() || "").includes(search) ||
-                                (store.store_code?.toLowerCase() || "").includes(search) ||
-                                (store.city?.toLowerCase() || "").includes(search)
-                              );
-                            })
-                            .map((store) => (
-                              <SelectItem key={store.id} value={store.id}>
-                                {store.name} {store.store_code ? `(${store.store_code})` : ""}
-                              </SelectItem>
-                            ))
-                        ) : (
-                          <SelectItem value="no-stores" disabled>
-                            No stores available
-                          </SelectItem>
-                        )}
-                      </SelectContent>
-                    </Select>
+                    <Popover open={storeSearchOpen} onOpenChange={setStoreSearchOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={storeSearchOpen}
+                          className="w-full h-10 justify-between font-normal"
+                        >
+                          {storeId
+                            ? stores.find((store) => store.id === storeId)?.name
+                            : "Select a store (optional)"}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                        <Command>
+                          <CommandInput placeholder="Search by name, code, or city..." />
+                          <CommandList>
+                            <CommandEmpty>No stores available</CommandEmpty>
+                            <CommandGroup>
+                              {stores.map((store) => (
+                                <CommandItem
+                                  key={store.id}
+                                  value={`${store.name} ${store.store_code || ""} ${store.city || ""}`}
+                                  onSelect={() => {
+                                    setStoreId(store.id)
+                                    setStoreSearchOpen(false)
+                                  }}
+                                >
+                                  <Check
+                                    className={cn(
+                                      "mr-2 h-4 w-4",
+                                      storeId === store.id ? "opacity-100" : "opacity-0"
+                                    )}
+                                  />
+                                  {store.name} {store.store_code ? `(${store.store_code})` : ""}
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                   </div>
 
                   <div className="space-y-2">
@@ -575,58 +586,66 @@ export function CreatePurchaseOrderSheet({ open, onOpenChange, onPurchaseOrderCr
                 <div className="grid grid-cols-12 gap-3 items-end p-4 bg-muted/30 rounded-lg border border-dashed">
                   <div className="col-span-5">
                     <Label htmlFor="product" className="text-sm font-medium">Product *</Label>
-                    <Select
-                      value={newItem.product_id}
-                      onValueChange={handleProductSelect}
-                      onOpenChange={() => {
-                        if (products.length === 0) {
+                    <Popover
+                      open={productSearchOpen}
+                      onOpenChange={(isOpen) => {
+                        setProductSearchOpen(isOpen)
+                        if (isOpen && products.length === 0) {
                           fetchProducts()
                         }
-                        setProductSearch("")
                       }}
                     >
-                      <SelectTrigger className="h-10 mt-1.5">
-                        <SelectValue placeholder="Select a product" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <div className="px-2 py-2">
-                          <Input
-                            placeholder="Search by name, SKU, or description"
-                            value={productSearch}
-                            onChange={e => setProductSearch(e.target.value)}
-                            autoFocus
-                            className="h-9"
-                          />
-                        </div>
-                        {loadingProducts ? (
-                          <SelectItem value="loading" disabled>
-                            <div className="flex items-center gap-2">
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              Loading products...
-                            </div>
-                          </SelectItem>
-                        ) : products.length > 0 ? (
-                          products
-                            .filter((product) => {
-                              const search = productSearch.toLowerCase();
-                              return (
-                                (product.name?.toLowerCase() || "").includes(search) ||
-                                (product.sku?.toLowerCase() || "").includes(search) ||
-                                (product.description?.toLowerCase() || "").includes(search)
-                              );
-                            })
-                            .map((product) => (
-                              <SelectItem key={product.id} value={product.id}>
-                                {product.name} {product.sku ? `(${product.sku})` : ""}
-                              </SelectItem>
-                            ))
-                        ) : (
-                          <SelectItem value="none" disabled>
-                            No products found
-                          </SelectItem>
-                        )}
-                      </SelectContent>
-                    </Select>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={productSearchOpen}
+                          className="w-full h-10 mt-1.5 justify-between font-normal"
+                        >
+                          {newItem.product_id
+                            ? products.find((product) => product.id === newItem.product_id)?.name
+                            : "Select a product"}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                        <Command>
+                          <CommandInput placeholder="Search by name, SKU, or description..." />
+                          <CommandList>
+                            {loadingProducts ? (
+                              <div className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground">
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Loading products...
+                              </div>
+                            ) : (
+                              <>
+                                <CommandEmpty>No products found</CommandEmpty>
+                                <CommandGroup>
+                                  {products.map((product) => (
+                                    <CommandItem
+                                      key={product.id}
+                                      value={`${product.name} ${product.sku || ""} ${product.description || ""}`}
+                                      onSelect={() => {
+                                        handleProductSelect(product.id)
+                                        setProductSearchOpen(false)
+                                      }}
+                                    >
+                                      <Check
+                                        className={cn(
+                                          "mr-2 h-4 w-4",
+                                          newItem.product_id === product.id ? "opacity-100" : "opacity-0"
+                                        )}
+                                      />
+                                      {product.name} {product.sku ? `(${product.sku})` : ""}
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </>
+                            )}
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                   </div>
 
                   <div className="col-span-2">

@@ -22,6 +22,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import {
   Table,
   TableBody,
@@ -31,15 +33,17 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { 
-  Plus, 
-  Trash2, 
+import {
+  Plus,
+  Trash2,
   ArrowLeft,
   AlertTriangle,
   CheckCircle,
   Calculator,
   Save,
-  Info
+  Info,
+  Check,
+  ChevronsUpDown
 } from "lucide-react"
 import { 
   createJournalEntry, 
@@ -81,6 +85,7 @@ export default function CreateJournalEntryPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [totalDebits, setTotalDebits] = useState(0)
   const [totalCredits, setTotalCredits] = useState(0)
+  const [accountSearchOpen, setAccountSearchOpen] = useState<{ [key: number]: boolean }>({})
   const router = useRouter()
   const { toast } = useToast()
 
@@ -428,21 +433,58 @@ export default function CreateJournalEntryPage() {
                                        name={`items.${index}.chart_of_account_id`}
                                        render={({ field }) => (
                                           <FormItem className="space-y-0">
-                                             <Select onValueChange={field.onChange} defaultValue={field.value}>
-                                                <FormControl>
-                                                   <SelectTrigger className="h-9">
-                                                      <SelectValue placeholder="Select account" />
-                                                   </SelectTrigger>
-                                                </FormControl>
-                                                <SelectContent className="max-h-[300px]">
-                                                   {accounts.map((account) => (
-                                                      <SelectItem key={account.id} value={account.id}>
-                                                         <span className="font-mono text-xs text-slate-500 mr-2">{account.account_code}</span>
-                                                         {account.account_name}
-                                                      </SelectItem>
-                                                   ))}
-                                                </SelectContent>
-                                             </Select>
+                                             <Popover
+                                                open={accountSearchOpen[index] || false}
+                                                onOpenChange={(open) => setAccountSearchOpen(prev => ({ ...prev, [index]: open }))}
+                                             >
+                                                <PopoverTrigger asChild>
+                                                   <FormControl>
+                                                      <Button
+                                                         variant="outline"
+                                                         role="combobox"
+                                                         aria-expanded={accountSearchOpen[index] || false}
+                                                         className="w-full justify-between font-normal h-9"
+                                                      >
+                                                         {field.value ? (
+                                                            (() => {
+                                                               const account = accounts.find((a) => a.id === field.value)
+                                                               return account ? (
+                                                                  <span className="truncate">
+                                                                     <span className="font-mono text-xs text-slate-500 mr-2">{account.account_code}</span>
+                                                                     {account.account_name}
+                                                                  </span>
+                                                               ) : "Select account"
+                                                            })()
+                                                         ) : "Select account"}
+                                                         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                                      </Button>
+                                                   </FormControl>
+                                                </PopoverTrigger>
+                                                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                                                   <Command>
+                                                      <CommandInput placeholder="Search accounts..." />
+                                                      <CommandList className="max-h-[300px]">
+                                                         <CommandEmpty>No account found.</CommandEmpty>
+                                                         <CommandGroup>
+                                                            {accounts.map((account) => (
+                                                               <CommandItem
+                                                                  key={account.id}
+                                                                  value={`${account.account_code} ${account.account_name}`}
+                                                                  onSelect={() => {
+                                                                     field.onChange(account.id)
+                                                                     setAccountSearchOpen(prev => ({ ...prev, [index]: false }))
+                                                                  }}
+                                                               >
+                                                                  <Check className={cn("mr-2 h-4 w-4", field.value === account.id ? "opacity-100" : "opacity-0")} />
+                                                                  <span className="font-mono text-xs text-slate-500 mr-2">{account.account_code}</span>
+                                                                  {account.account_name}
+                                                               </CommandItem>
+                                                            ))}
+                                                         </CommandGroup>
+                                                      </CommandList>
+                                                   </Command>
+                                                </PopoverContent>
+                                             </Popover>
                                              <FormMessage />
                                           </FormItem>
                                        )}

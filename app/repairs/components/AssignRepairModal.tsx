@@ -13,19 +13,23 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { 
+import { cn } from "@/lib/utils";
+import {
   UserCheck,
   Loader2,
   Users,
   AlertTriangle,
   CheckCircle,
   Package,
-  Wrench
+  Wrench,
+  Check,
+  ChevronsUpDown
 } from "lucide-react";
 
 interface AssignRepairModalProps {
@@ -52,6 +56,8 @@ export function AssignRepairModal({
   const [assignments, setAssignments] = useState<ItemAssignment[]>([]);
   const [defaultAssignee, setDefaultAssignee] = useState<string>("");
   const [loading, setLoading] = useState(false);
+  const [defaultAssigneeSearchOpen, setDefaultAssigneeSearchOpen] = useState(false);
+  const [itemAssigneeSearchOpen, setItemAssigneeSearchOpen] = useState<{ [key: string]: boolean }>({});
   const { toast } = useToast();
 
   // Helper function to check if an item is assigned
@@ -222,25 +228,51 @@ export function AssignRepairModal({
                 <CardContent className="space-y-4">
                   <div className="flex space-x-2">
                     <div className="flex-1">
-                      <Select 
-                        value={defaultAssignee} 
-                        onValueChange={setDefaultAssignee}
-                        disabled={usersLoading}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select default assignee" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {users.map((user) => (
-                            <SelectItem key={user.id} value={user.id}>
-                              <div>
-                                <div className="font-medium">{user.first_name} {user.last_name}</div>
-                                <div className="text-xs text-gray-500">{user.email}</div>
-                              </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <Popover open={defaultAssigneeSearchOpen} onOpenChange={setDefaultAssigneeSearchOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={defaultAssigneeSearchOpen}
+                            className="w-full justify-between font-normal"
+                            disabled={usersLoading}
+                          >
+                            {defaultAssignee
+                              ? (() => {
+                                  const user = users.find((u) => u.id === defaultAssignee);
+                                  return user ? `${user.first_name} ${user.last_name}` : "Select default assignee";
+                                })()
+                              : "Select default assignee"}
+                            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                          <Command>
+                            <CommandInput placeholder="Search users..." />
+                            <CommandList>
+                              <CommandEmpty>No user found.</CommandEmpty>
+                              <CommandGroup>
+                                {users.map((user) => (
+                                  <CommandItem
+                                    key={user.id}
+                                    value={`${user.first_name} ${user.last_name} ${user.email}`}
+                                    onSelect={() => {
+                                      setDefaultAssignee(user.id);
+                                      setDefaultAssigneeSearchOpen(false);
+                                    }}
+                                  >
+                                    <Check className={cn("mr-2 h-4 w-4", defaultAssignee === user.id ? "opacity-100" : "opacity-0")} />
+                                    <div>
+                                      <div className="font-medium">{user.first_name} {user.last_name}</div>
+                                      <div className="text-xs text-gray-500">{user.email}</div>
+                                    </div>
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
                     </div>
                     <Button 
                       variant="outline" 
@@ -306,27 +338,56 @@ export function AssignRepairModal({
                             {assignment.selected && (
                               <div className="space-y-2">
                                 <Label className="text-sm font-medium">Assign to:</Label>
-                                <Select 
-                                  value={assignment.assigned_to} 
-                                  onValueChange={(value) => 
-                                    updateAssignment(item.id, "assigned_to", value)
+                                <Popover
+                                  open={itemAssigneeSearchOpen[item.id] || false}
+                                  onOpenChange={(isOpen) =>
+                                    setItemAssigneeSearchOpen((prev) => ({ ...prev, [item.id]: isOpen }))
                                   }
-                                  disabled={usersLoading}
                                 >
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Select user" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {users.map((user) => (
-                                      <SelectItem key={user.id} value={user.id}>
-                                        <div>
-                                          <div className="font-medium">{user.first_name} {user.last_name}</div>
-                                          <div className="text-xs text-gray-500">{user.email}</div>
-                                        </div>
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                  <PopoverTrigger asChild>
+                                    <Button
+                                      variant="outline"
+                                      role="combobox"
+                                      aria-expanded={itemAssigneeSearchOpen[item.id] || false}
+                                      className="w-full justify-between font-normal"
+                                      disabled={usersLoading}
+                                    >
+                                      {assignment.assigned_to
+                                        ? (() => {
+                                            const user = users.find((u) => u.id === assignment.assigned_to);
+                                            return user ? `${user.first_name} ${user.last_name}` : "Select user";
+                                          })()
+                                        : "Select user"}
+                                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                    </Button>
+                                  </PopoverTrigger>
+                                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                                    <Command>
+                                      <CommandInput placeholder="Search users..." />
+                                      <CommandList>
+                                        <CommandEmpty>No user found.</CommandEmpty>
+                                        <CommandGroup>
+                                          {users.map((user) => (
+                                            <CommandItem
+                                              key={user.id}
+                                              value={`${user.first_name} ${user.last_name} ${user.email}`}
+                                              onSelect={() => {
+                                                updateAssignment(item.id, "assigned_to", user.id);
+                                                setItemAssigneeSearchOpen((prev) => ({ ...prev, [item.id]: false }));
+                                              }}
+                                            >
+                                              <Check className={cn("mr-2 h-4 w-4", assignment.assigned_to === user.id ? "opacity-100" : "opacity-0")} />
+                                              <div>
+                                                <div className="font-medium">{user.first_name} {user.last_name}</div>
+                                                <div className="text-xs text-gray-500">{user.email}</div>
+                                              </div>
+                                            </CommandItem>
+                                          ))}
+                                        </CommandGroup>
+                                      </CommandList>
+                                    </Command>
+                                  </PopoverContent>
+                                </Popover>
                               </div>
                             )}
 

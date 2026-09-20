@@ -14,23 +14,20 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { 
-  Package, 
+import {
+  Package,
   Wrench,
   Plus,
   Loader2,
   Search,
   Trash2,
-  Save
+  Save,
+  Check,
+  ChevronsUpDown
 } from "lucide-react";
 import { 
   updateRepairWithItems,
@@ -87,6 +84,7 @@ export function EditRepairModal({
   const [usersLoading, setUsersLoading] = useState(false);
   const [itemSearch, setItemSearch] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<AssignableItem | null>(null);
+  const [approverSearchOpen, setApproverSearchOpen] = useState(false);
   const { toast } = useToast();
 
   const [formData, setFormData] = useState<FormData>({
@@ -406,25 +404,51 @@ export function EditRepairModal({
             <CardContent>
               <div className="space-y-2">
                 <Label htmlFor="approver_id">Approver *</Label>
-                <Select 
-                  value={formData.approver_id} 
-                  onValueChange={(value) => setFormData(prev => ({ ...prev, approver_id: value }))}
-                  disabled={usersLoading}
-                >
-                  <SelectTrigger className={errors.approver_id ? "border-red-500" : ""}>
-                    <SelectValue placeholder="Select approver" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {users.map((user) => (
-                      <SelectItem key={user.id} value={user.id}>
-                        <div>
-                          <div className="font-medium">{user.first_name} {user.last_name}</div>
-                          <div className="text-xs text-gray-500">{user.email}</div>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Popover open={approverSearchOpen} onOpenChange={setApproverSearchOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={approverSearchOpen}
+                      className={cn("w-full justify-between font-normal", errors.approver_id ? "border-red-500" : "")}
+                      disabled={usersLoading}
+                    >
+                      {formData.approver_id
+                        ? (() => {
+                            const user = users.find((u) => u.id === formData.approver_id);
+                            return user ? `${user.first_name} ${user.last_name}` : "Select approver";
+                          })()
+                        : "Select approver"}
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="Search users..." />
+                      <CommandList>
+                        <CommandEmpty>No user found.</CommandEmpty>
+                        <CommandGroup>
+                          {users.map((user) => (
+                            <CommandItem
+                              key={user.id}
+                              value={`${user.first_name} ${user.last_name} ${user.email}`}
+                              onSelect={() => {
+                                setFormData(prev => ({ ...prev, approver_id: user.id }));
+                                setApproverSearchOpen(false);
+                              }}
+                            >
+                              <Check className={cn("mr-2 h-4 w-4", formData.approver_id === user.id ? "opacity-100" : "opacity-0")} />
+                              <div>
+                                <div className="font-medium">{user.first_name} {user.last_name}</div>
+                                <div className="text-xs text-gray-500">{user.email}</div>
+                              </div>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
                 {errors.approver_id && (
                   <p className="text-sm text-red-600">{errors.approver_id}</p>
                 )}

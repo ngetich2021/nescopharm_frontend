@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { 
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -19,7 +19,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { 
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Check, ChevronsUpDown } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
   Card,
   CardContent,
   CardHeader,
@@ -47,6 +51,8 @@ export function CreateEmployeeSheet({ open, onOpenChange, onSuccess }: CreateEmp
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [users, setUsers] = useState<UserData[]>([]);
   const [employeesLoading, setEmployeesLoading] = useState(false);
+  const [leaveApproverSearchOpen, setLeaveApproverSearchOpen] = useState(false);
+  const [salaryAdvanceApproverSearchOpen, setSalaryAdvanceApproverSearchOpen] = useState(false);
   const { toast } = useToast();
   
   const [formData, setFormData] = useState({
@@ -614,41 +620,141 @@ export function CreateEmployeeSheet({ open, onOpenChange, onSuccess }: CreateEmp
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="leave_approver_id">Leave Approver</Label>
-                    <Select
-                      value={formData.leave_approver_id}
-                      onValueChange={(value) => setFormData({ ...formData, leave_approver_id: value === "__none__" ? "" : value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select leave approver" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">Not assigned</SelectItem>
-                        {users.map((user) => (
-                          <SelectItem key={user.id} value={user.id}>
-                            {[user.first_name, user.last_name].filter(Boolean).join(" ") || user.email}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Popover open={leaveApproverSearchOpen} onOpenChange={setLeaveApproverSearchOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={leaveApproverSearchOpen}
+                          className="w-full justify-between font-normal"
+                        >
+                          {formData.leave_approver_id
+                            ? [
+                                users.find((user) => user.id === formData.leave_approver_id)?.first_name,
+                                users.find((user) => user.id === formData.leave_approver_id)?.last_name,
+                              ]
+                                .filter(Boolean)
+                                .join(" ") || users.find((user) => user.id === formData.leave_approver_id)?.email
+                            : "Select leave approver"}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                        <Command>
+                          <CommandInput placeholder="Search leave approver..." />
+                          <CommandList>
+                            <CommandEmpty>No user found.</CommandEmpty>
+                            <CommandGroup>
+                              <CommandItem
+                                value="Not assigned"
+                                onSelect={() => {
+                                  setFormData({ ...formData, leave_approver_id: "" });
+                                  setLeaveApproverSearchOpen(false);
+                                }}
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4",
+                                    !formData.leave_approver_id ? "opacity-100" : "opacity-0"
+                                  )}
+                                />
+                                Not assigned
+                              </CommandItem>
+                              {users.map((user) => {
+                                const label = [user.first_name, user.last_name].filter(Boolean).join(" ") || user.email;
+                                return (
+                                  <CommandItem
+                                    key={user.id}
+                                    value={label}
+                                    onSelect={() => {
+                                      setFormData({ ...formData, leave_approver_id: user.id });
+                                      setLeaveApproverSearchOpen(false);
+                                    }}
+                                  >
+                                    <Check
+                                      className={cn(
+                                        "mr-2 h-4 w-4",
+                                        formData.leave_approver_id === user.id ? "opacity-100" : "opacity-0"
+                                      )}
+                                    />
+                                    {label}
+                                  </CommandItem>
+                                );
+                              })}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="salary_advance_approver_id">Salary Advance Approver</Label>
-                    <Select
-                      value={formData.salary_advance_approver_id}
-                      onValueChange={(value) => setFormData({ ...formData, salary_advance_approver_id: value === "__none__" ? "" : value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select salary advance approver" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">Not assigned</SelectItem>
-                        {users.map((user) => (
-                          <SelectItem key={user.id} value={user.id}>
-                            {[user.first_name, user.last_name].filter(Boolean).join(" ") || user.email}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Popover open={salaryAdvanceApproverSearchOpen} onOpenChange={setSalaryAdvanceApproverSearchOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={salaryAdvanceApproverSearchOpen}
+                          className="w-full justify-between font-normal"
+                        >
+                          {formData.salary_advance_approver_id
+                            ? [
+                                users.find((user) => user.id === formData.salary_advance_approver_id)?.first_name,
+                                users.find((user) => user.id === formData.salary_advance_approver_id)?.last_name,
+                              ]
+                                .filter(Boolean)
+                                .join(" ") || users.find((user) => user.id === formData.salary_advance_approver_id)?.email
+                            : "Select salary advance approver"}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                        <Command>
+                          <CommandInput placeholder="Search salary advance approver..." />
+                          <CommandList>
+                            <CommandEmpty>No user found.</CommandEmpty>
+                            <CommandGroup>
+                              <CommandItem
+                                value="Not assigned"
+                                onSelect={() => {
+                                  setFormData({ ...formData, salary_advance_approver_id: "" });
+                                  setSalaryAdvanceApproverSearchOpen(false);
+                                }}
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4",
+                                    !formData.salary_advance_approver_id ? "opacity-100" : "opacity-0"
+                                  )}
+                                />
+                                Not assigned
+                              </CommandItem>
+                              {users.map((user) => {
+                                const label = [user.first_name, user.last_name].filter(Boolean).join(" ") || user.email;
+                                return (
+                                  <CommandItem
+                                    key={user.id}
+                                    value={label}
+                                    onSelect={() => {
+                                      setFormData({ ...formData, salary_advance_approver_id: user.id });
+                                      setSalaryAdvanceApproverSearchOpen(false);
+                                    }}
+                                  >
+                                    <Check
+                                      className={cn(
+                                        "mr-2 h-4 w-4",
+                                        formData.salary_advance_approver_id === user.id ? "opacity-100" : "opacity-0"
+                                      )}
+                                    />
+                                    {label}
+                                  </CommandItem>
+                                );
+                              })}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                   </div>
                 </div>
                 
