@@ -219,7 +219,12 @@ export async function createProductReceipt(payload: {
     lot_number?: string;
     serial_number?: string;
     manufacture_date?: string;
-    individual_serials?: string[];
+    // A serial number per unit received (array length must equal quantity),
+    // or omit and set track_serials to have the backend auto-generate them.
+    serial_numbers?: string[];
+    track_serials?: boolean;
+    serial_prefix?: string;
+    warranty_months?: number;
     custom_attributes?: Record<string, any>;
   }>;
   document?: File | null;
@@ -374,7 +379,12 @@ export async function updateProductReceiptFull(id: string, payload: {
     lot_number?: string;
     serial_number?: string;
     manufacture_date?: string;
-    individual_serials?: string[];
+    // A serial number per unit received (array length must equal quantity),
+    // or omit and set track_serials to have the backend auto-generate them.
+    serial_numbers?: string[];
+    track_serials?: boolean;
+    serial_prefix?: string;
+    warranty_months?: number;
     custom_attributes?: Record<string, any>;
   }>;
   document?: File | null;

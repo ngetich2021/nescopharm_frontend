@@ -49,6 +49,12 @@ export interface OrderDispatchItem {
   quantity: number;
   delivered_quantity: number;
   damaged_quantity: number;
+  batch_allocations?: Array<{
+    batch_id: string;
+    batch_number: string;
+    quantity: number;
+    expiry_date: string | null;
+  }> | null;
   created_at: string;
   updated_at: string;
   // A historic dispatch can outlive a product removed from the catalogue.

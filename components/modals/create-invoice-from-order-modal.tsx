@@ -20,7 +20,7 @@ import { useToast } from "@/hooks/use-toast"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import { Wallet, CreditCard as CreditCardIcon } from "lucide-react"
 import { CreditOveragePrompt } from "@/components/credit-overage-prompt"
-import { getCreditOverage, coversOverage } from "@/lib/credit-overage"
+import { coversOverage } from "@/lib/credit-overage"
 
 const invoiceFromOrderSchema = z.object({
   order_id: z.string().min(1, "Order is required"),
@@ -154,9 +154,15 @@ export function CreateInvoiceFromOrderModal({ open, onClose, onSuccess }: Create
   }, [selectedOrder?.customer_id])
 
   const orderTotal = selectedOrder ? parseFloat(selectedOrder.final_amount || selectedOrder.total_amount) : 0
-  const creditOverage = paymentOption === 'credit' && creditTerms?.credit_days
-    ? getCreditOverage(orderTotal, creditTerms.available_credit)
-    : 0
+  // No overage check here: this order's outstanding balance is already
+  // counted against the customer's available_credit (see backend
+  // CustomerController::creditTerms(), which sums every un-invoiced credit
+  // order's remaining balance into creditUsed) - that exposure, and any
+  // down payment made to cover it, was already vetted when the order itself
+  // was created. Turning that same order into an invoice doesn't add new
+  // credit exposure, so re-running the overage gate here would just demand
+  // the customer pay the same overage a second time.
+  const creditOverage = 0
 
   const onSubmit: SubmitHandler<InvoiceFromOrderFormData> = async (data) => {
     // Prevent submission if no valid order is selected

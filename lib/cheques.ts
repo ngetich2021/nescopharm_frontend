@@ -2,11 +2,20 @@ import apiCall from "@/lib/api"
 
 export type ChequeStatus = "pending" | "approved" | "bounced" | "cancelled"
 
+export type ChequeDirection = "received" | "issued"
+
 export interface Cheque {
   id: string
   company_id: string
-  customer_id: string
+  direction: ChequeDirection
+  customer_id: string | null
+  supplier_id: string | null
+  // Free-text payee for issued cheques with no supplier/customer master
+  // record - office supplies, logistics/courier fees, etc.
+  payee_name: string | null
+  payee_display_name: string | null
   invoice_id: string | null
+  purchase_order_id: string | null
   payment_id: string | null
   cheque_number: string
   bank_name: string
@@ -20,10 +29,13 @@ export interface Cheque {
   created_by: string | null
   approved_by: string | null
   approved_at: string | null
+  reminder_sent_at: string | null
   created_at: string
   updated_at: string
   customer?: { id: string; name: string; business_name?: string | null; customer_type?: "individual" | "company" | null }
   invoice?: { id: string; invoice_number: string }
+  supplier?: { id: string; name: string }
+  purchase_order?: { id: string; order_number: string }
 }
 
 export interface CreateChequeRequest {
@@ -37,17 +49,38 @@ export interface CreateChequeRequest {
   attachment?: File | null
 }
 
-export interface ChequeFilters {
-  status?: ChequeStatus
+export interface CreateIssuedChequeRequest {
+  // Who we're paying: a supplier, a customer refund (against a specific
+  // invoice, or just the customer directly), or - if neither has a master
+  // record - a free-text payee name (office supplies, logistics, etc.).
+  supplier_id?: string
+  purchase_order_id?: string
   customer_id?: string
   invoice_id?: string
+  payee_name?: string
+  cheque_number: string
+  bank_name: string
+  amount: number
+  issue_date: string
+  maturity_date: string
+  notes?: string
+}
+
+export interface ChequeFilters {
+  status?: ChequeStatus
+  direction?: ChequeDirection
+  customer_id?: string
+  invoice_id?: string
+  supplier_id?: string
 }
 
 export async function fetchCheques(filters?: ChequeFilters): Promise<Cheque[]> {
   const params = new URLSearchParams()
   if (filters?.status) params.append("status", filters.status)
+  if (filters?.direction) params.append("direction", filters.direction)
   if (filters?.customer_id) params.append("customer_id", filters.customer_id)
   if (filters?.invoice_id) params.append("invoice_id", filters.invoice_id)
+  if (filters?.supplier_id) params.append("supplier_id", filters.supplier_id)
   const query = params.toString() ? `?${params.toString()}` : ""
 
   const response = await apiCall<{ data: Cheque[] }>(`/cheques${query}`, "GET", undefined, true)
@@ -67,6 +100,21 @@ export async function createCheque(data: CreateChequeRequest): Promise<Cheque> {
   }
 
   const response = await apiCall<{ message: string; data: Cheque }>("/cheques", "POST", formData, true)
+  return response.data
+}
+
+/**
+ * A post-dated cheque issued to a supplier (accounts payable) rather than
+ * received from a customer. Purely a tracking record for the maturity
+ * alert - it does not create a supplier payment or touch PO balances.
+ */
+export async function createIssuedCheque(data: CreateIssuedChequeRequest): Promise<Cheque> {
+  const response = await apiCall<{ message: string; data: Cheque }>(
+    "/cheques",
+    "POST",
+    { ...data, direction: "issued" },
+    true
+  )
   return response.data
 }
 

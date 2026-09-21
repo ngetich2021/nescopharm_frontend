@@ -21,12 +21,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Plus, Truck, User, Phone, MapPin, Package } from "lucide-react";
+import { Loader2, Plus, Truck, User, Phone, MapPin, Package, Wallet } from "lucide-react";
 import { OrderDispatch } from "@/lib/order-dispatches";
 import { createLogistics, CreateLogisticsData } from "@/lib/logistics";
 import { getDeliveryPersons, createDeliveryPerson, DeliveryPerson } from "@/lib/delivery-persons";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
+import { KENYA_REGIONS, getCountiesForRegion } from "@/lib/kenya-locations";
 
 interface CreateLogisticsModalProps {
   open: boolean;
@@ -57,6 +58,14 @@ const VEHICLE_TYPES = [
   { value: "motorcycle", label: "Motorcycle" },
   { value: "bicycle", label: "Bicycle" },
   { value: "car", label: "Car" },
+];
+
+const PAYMENT_METHODS = [
+  { value: "cash", label: "Cash" },
+  { value: "mpesa", label: "M-Pesa" },
+  { value: "bank_transfer", label: "Bank Transfer" },
+  { value: "cheque", label: "Cheque" },
+  { value: "other", label: "Other" },
 ];
 
 export function CreateLogisticsModal({
@@ -100,6 +109,7 @@ export function CreateLogisticsModal({
         recipient_name: customer?.name || "",
         recipient_phone: customer?.phone || "",
         delivery_address: dispatch.delivery_location?.address || "",
+        country: "Kenya",
         notes: dispatch.special_instructions || "",
       });
     }
@@ -154,7 +164,7 @@ export function CreateLogisticsModal({
     }
   };
 
-  const handleChange = (field: keyof CreateLogisticsData, value: string | boolean) => {
+  const handleChange = (field: keyof CreateLogisticsData, value: string | boolean | number) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
@@ -409,7 +419,7 @@ export function CreateLogisticsModal({
                   </div>
                 </div>
 
-                {/* Delivery Address - OPTIONAL */}
+                {/* Delivery Address & Destination - OPTIONAL */}
                 <div className="border-t border-gray-200 pt-4 mb-4">
                   <h5 className="text-sm font-medium text-gray-600 mb-3 flex items-center gap-1">
                     <MapPin className="h-3.5 w-3.5" />
@@ -426,20 +436,173 @@ export function CreateLogisticsModal({
                         onChange={(e) => handleChange("delivery_address", e.target.value)}
                       />
                     </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="delivery_location">Destination</Label>
+                      <Input
+                        id="delivery_location"
+                        placeholder="e.g. ABC Supermarket, Westlands"
+                        value={formData.delivery_location || ""}
+                        onChange={(e) => handleChange("delivery_location", e.target.value)}
+                      />
+                    </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="grid gap-2">
-                        <Label htmlFor="city">City</Label>
+                        <Label htmlFor="city">City/Town</Label>
                         <Input id="city" placeholder="Nairobi" value={formData.city || ""} onChange={(e) => handleChange("city", e.target.value)} />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="state">State/County</Label>
-                        <Input id="state" placeholder="Nairobi County" value={formData.state || ""} onChange={(e) => handleChange("state", e.target.value)} />
+                        <Label htmlFor="region">Region</Label>
+                        <Select
+                          value={formData.region || ""}
+                          onValueChange={(value) => {
+                            handleChange("region", value);
+                            // Reset the county whenever the region changes since
+                            // the previous selection may no longer be valid.
+                            handleChange("state", "");
+                          }}
+                        >
+                          <SelectTrigger id="region">
+                            <SelectValue placeholder="Select region" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {KENYA_REGIONS.map((region) => (
+                              <SelectItem key={region.name} value={region.name}>{region.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor="state">County</Label>
+                        <Select
+                          value={formData.state || ""}
+                          onValueChange={(value) => handleChange("state", value)}
+                          disabled={!formData.region}
+                        >
+                          <SelectTrigger id="state">
+                            <SelectValue placeholder={formData.region ? "Select county" : "Select a region first"} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {getCountiesForRegion(formData.region || "").map((county) => (
+                              <SelectItem key={county} value={county}>{county}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="country">Country</Label>
+                        <Input id="country" value="Kenya" disabled readOnly />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Delivery Payment - OPTIONAL: what's paid to the delivery/
+                    logistics provider for this dispatch, not the customer's
+                    payment for the goods. */}
+                <div className="border-t border-gray-200 pt-4 mb-4">
+                  <h5 className="text-sm font-medium text-gray-600 mb-3 flex items-center gap-1">
+                    <Wallet className="h-3.5 w-3.5" />
+                    Delivery Payment
+                    <span className="text-xs text-gray-400 font-normal">(all optional)</span>
+                  </h5>
+                  <div className="grid gap-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor="delivery_cost">Delivery Cost (KES)</Label>
+                        <Input
+                          id="delivery_cost"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          placeholder="0.00"
+                          value={formData.delivery_cost ?? ""}
+                          onChange={(e) => handleChange("delivery_cost", e.target.value === "" ? "" : Number(e.target.value))}
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="amount_paid">Amount Paid (KES)</Label>
+                        <Input
+                          id="amount_paid"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          placeholder="0.00"
+                          value={formData.amount_paid ?? ""}
+                          onChange={(e) => handleChange("amount_paid", e.target.value === "" ? "" : Number(e.target.value))}
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor="payment_method">Payment Method</Label>
+                        <Select value={formData.payment_method || ""} onValueChange={(value) => handleChange("payment_method", value)}>
+                          <SelectTrigger id="payment_method">
+                            <SelectValue placeholder="Select method" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {PAYMENT_METHODS.map((method) => (
+                              <SelectItem key={method.value} value={method.value}>{method.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="payment_reference">Payment Reference</Label>
+                        <Input
+                          id="payment_reference"
+                          placeholder="e.g. M-Pesa code"
+                          value={formData.payment_reference || ""}
+                          onChange={(e) => handleChange("payment_reference", e.target.value)}
+                        />
                       </div>
                     </div>
                     <div className="grid gap-2">
-                      <Label htmlFor="country">Country</Label>
-                      <Input id="country" placeholder="Kenya" value={formData.country || ""} onChange={(e) => handleChange("country", e.target.value)} />
+                      <Label htmlFor="payment_date">Payment Date</Label>
+                      <Input
+                        id="payment_date"
+                        type="date"
+                        value={formData.payment_date || ""}
+                        onChange={(e) => handleChange("payment_date", e.target.value)}
+                      />
                     </div>
+
+                    {/* Cheque details - only relevant when paying by cheque */}
+                    {formData.payment_method === "cheque" && (
+                      <div className="rounded-md border border-gray-200 bg-gray-50 p-3 grid gap-4">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="grid gap-2">
+                            <Label htmlFor="cheque_number">Cheque Number</Label>
+                            <Input
+                              id="cheque_number"
+                              placeholder="e.g. 001234"
+                              value={formData.cheque_number || ""}
+                              onChange={(e) => handleChange("cheque_number", e.target.value)}
+                            />
+                          </div>
+                          <div className="grid gap-2">
+                            <Label htmlFor="bank_name">Bank Name</Label>
+                            <Input
+                              id="bank_name"
+                              placeholder="e.g. Equity Bank"
+                              value={formData.bank_name || ""}
+                              onChange={(e) => handleChange("bank_name", e.target.value)}
+                            />
+                          </div>
+                        </div>
+                        <div className="grid gap-2">
+                          <Label htmlFor="cheque_maturity_date">Maturity Date</Label>
+                          <Input
+                            id="cheque_maturity_date"
+                            type="date"
+                            value={formData.cheque_maturity_date || ""}
+                            onChange={(e) => handleChange("cheque_maturity_date", e.target.value)}
+                          />
+                          <p className="text-xs text-gray-400">When a post-dated cheque becomes bankable</p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 

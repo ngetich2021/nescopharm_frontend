@@ -6,6 +6,8 @@ import { PermissionGuard } from "@/components/PermissionGuard"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import TemperatureRecordsTab from "./components/temperature-records-tab"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -296,6 +298,13 @@ export default function SopsPage() {
           <h1 className="text-2xl sm:text-3xl font-bold">SOPs</h1>
         </div>
 
+        <Tabs defaultValue="sops">
+          <TabsList>
+            <TabsTrigger value="sops">SOPs</TabsTrigger>
+            <TabsTrigger value="temperature">Temperature Records</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="sops" className="space-y-6 mt-6">
         <div className="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -532,6 +541,12 @@ export default function SopsPage() {
             </div>
           </div>
         </div>
+          </TabsContent>
+
+          <TabsContent value="temperature" className="mt-6">
+            <TemperatureRecordsTab />
+          </TabsContent>
+        </Tabs>
       </div>
     </PermissionGuard>
   )

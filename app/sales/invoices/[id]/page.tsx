@@ -27,7 +27,8 @@ import {
   History,
   Plus,
   FileText,
-  Printer
+  Printer,
+  Maximize2
 } from "lucide-react"
 import { fetchInvoiceById, deleteInvoice, Invoice, sendInvoice, fetchSalesReps, assignSalesRep, SalesRep } from "@/lib/invoices"
 import { getInvoiceStatusColor, getInvoiceStatusLabel } from "@/lib/invoice-status"
@@ -855,13 +856,23 @@ export default function InvoiceDetailPage() {
         <div className="space-y-6 order-1 xl:order-2">
           <Card className="h-fit sticky top-6">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Eye className="h-5 w-5" />
-                Invoice Preview
-              </CardTitle>
-              <p className="text-sm text-muted-foreground">
-                This is how your invoice will appear to customers
-              </p>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Eye className="h-5 w-5" />
+                    Invoice Preview
+                  </CardTitle>
+                  <p className="text-sm text-muted-foreground">
+                    This is how your invoice will appear to customers
+                  </p>
+                </div>
+                <Link href={`/sales/invoices/${invoice.id}/document`}>
+                  <Button variant="outline" size="sm">
+                    <Maximize2 className="h-4 w-4 mr-2" />
+                    View Full Details
+                  </Button>
+                </Link>
+              </div>
             </CardHeader>
             <CardContent>
               {/* Invoice Template Preview */}

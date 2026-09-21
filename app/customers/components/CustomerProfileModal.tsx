@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import {
   Sheet,
   SheetContent,
@@ -405,39 +406,27 @@ export function CustomerProfileModal({
                 <TabsContent value="notes" className="space-y-4">
                   <Card>
                     <CardHeader>
-                      <CardTitle className="flex items-center gap-2">
-                        <FileText className="h-5 w-5" />
-                        Customer Notes
-                      </CardTitle>
+                      <div className="flex items-center justify-between gap-2">
+                        <CardTitle className="flex items-center gap-2">
+                          <FileText className="h-5 w-5" />
+                          Customer Notes
+                        </CardTitle>
+                        <Link href={`/customers/${currentCustomer.id}/statement`}>
+                          <Button variant="outline" size="sm">
+                            View Statement
+                          </Button>
+                        </Link>
+                      </div>
                     </CardHeader>
                     <CardContent>
                       {(() => {
-                        // Handle both string notes and array of note objects, or null
-                        const notes = customerProfile?.notes;
-                        
-                        if (notes && typeof notes === 'string') {
-                          return (
-                            <div className="p-3 border rounded-lg">
-                              <div className="text-sm">{notes}</div>
-                              <div className="text-xs text-gray-500 mt-2">
-                                Customer notes
-                              </div>
-                            </div>
-                          );
-                        } else if (notes && Array.isArray(notes) && notes.length > 0) {
-                          return (
-                            <div className="space-y-3">
-                              {notes.slice(0, 3).map((note, index) => (
-                                <div key={note.id || index} className="p-3 border rounded-lg">
-                                  <div className="text-sm">{note.note_content || String(note)}</div>
-                                  <div className="text-xs text-gray-500 mt-2">
-                                    {note.created_at ? format(new Date(note.created_at), "MMM dd, yyyy 'at' HH:mm") : 'Customer note'}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          );
-                        } else {
+                        // The customer's own free-text notes field, plus
+                        // actual CustomerNote records (which includes the
+                        // auto-generated monthly account statements).
+                        const plainNote = customerProfile?.notes;
+                        const records = customerProfile?.customer_notes ?? [];
+
+                        if (!plainNote && records.length === 0) {
                           return (
                             <div className="text-center py-8 text-gray-500">
                               <FileText className="h-12 w-12 mx-auto mb-4 text-gray-300" />
@@ -445,6 +434,33 @@ export function CustomerProfileModal({
                             </div>
                           );
                         }
+
+                        return (
+                          <div className="space-y-3">
+                            {plainNote && (
+                              <div className="p-3 border rounded-lg">
+                                <div className="text-sm whitespace-pre-wrap">{plainNote}</div>
+                                <div className="text-xs text-gray-500 mt-2">Customer notes</div>
+                              </div>
+                            )}
+                            {records.map((note) => {
+                              const isStatement = note.note_content?.startsWith("ACCOUNT STATEMENT")
+                              return (
+                                <div key={note.id} className="p-3 border rounded-lg">
+                                  {isStatement && (
+                                    <span className="inline-block mb-1 px-2 py-0.5 text-xs font-medium rounded bg-blue-100 text-blue-800">
+                                      Auto-generated statement
+                                    </span>
+                                  )}
+                                  <div className="text-sm whitespace-pre-wrap">{note.note_content}</div>
+                                  <div className="text-xs text-gray-500 mt-2">
+                                    {note.created_at ? format(new Date(note.created_at), "MMM dd, yyyy 'at' HH:mm") : "Customer note"}
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        );
                       })()}
                     </CardContent>
                   </Card>

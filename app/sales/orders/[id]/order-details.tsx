@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { ArrowLeft, Mail, MoreHorizontal, Phone, Printer, MapPin, ChevronRight, HelpCircle, Truck, FileText, Plus, Eye, Download, CreditCard, History, Edit, Wallet } from "lucide-react"
 import { CreditOveragePrompt } from "@/components/credit-overage-prompt"
-import { getCreditOverage, coversOverage } from "@/lib/credit-overage"
+import { coversOverage } from "@/lib/credit-overage"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -242,9 +242,15 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
   const totalPaid = payments.reduce((sum, payment) => sum + parseFloat(payment.amount_paid), 0);
 
   const orderTotal = parseFloat(order.final_amount || order.total_amount)
-  const invoiceCreditOverage = invoicePaymentOption === 'credit' && invoiceCreditTerms?.credit_days
-    ? getCreditOverage(orderTotal, invoiceCreditTerms.available_credit)
-    : 0
+  // No overage check here: this order's outstanding balance is already
+  // counted against the customer's available_credit (see backend
+  // CustomerController::creditTerms(), which sums every un-invoiced credit
+  // order's remaining balance into creditUsed) - that exposure, and any
+  // down payment made to cover it, was already vetted when the order itself
+  // was created. Turning that same order into an invoice doesn't add new
+  // credit exposure, so re-running the overage gate here would just demand
+  // the customer pay the same overage a second time.
+  const invoiceCreditOverage = 0
 
   // Function to create invoice directly from current order
   const handleCreateInvoice = async () => {
@@ -813,7 +819,20 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
 
                       return (
                         <TableRow key={item.id}>
-                          <TableCell>{item.product?.name || 'Unknown Product'}</TableCell>
+                          <TableCell>
+                            {item.product?.name || 'Unknown Product'}
+                            {item.batch_allocations && item.batch_allocations.length > 0 && (
+                              <div className="text-xs text-muted-foreground mt-0.5">
+                                {item.batch_allocations.map((a, i) => (
+                                  <div key={a.batch_id}>
+                                    {item.batch_allocations!.length > 1 ? `${a.quantity} from ` : ''}
+                                    Batch {a.batch_number}
+                                    {a.expiry_date && ` · Exp ${new Date(a.expiry_date).toLocaleDateString()}`}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </TableCell>
                           {/* Only show Variant cell if any item has variants */}
                           {hasAnyVariant && (
                             <TableCell>

@@ -585,6 +585,17 @@ export function DispatchDetailsSheet({
                              <span className="bg-gray-100 px-2 py-0.5 rounded text-xs font-mono">SKU: {item.product?.sku || "N/A"}</span>
                              {item.variant && <span className="text-xs">• {item.variant.name}</span>}
                            </div>
+                           {item.batch_allocations && item.batch_allocations.length > 0 && (
+                             <div className="text-xs text-gray-500">
+                               {item.batch_allocations.map((a) => (
+                                 <div key={a.batch_id}>
+                                   Pick from Batch {a.batch_number}
+                                   {a.expiry_date && ` · Exp ${new Date(a.expiry_date).toLocaleDateString()}`}
+                                   {item.batch_allocations!.length > 1 && ` (${a.quantity})`}
+                                 </div>
+                               ))}
+                             </div>
+                           )}
                          </div>
                       </div>
                       <div className="text-right">

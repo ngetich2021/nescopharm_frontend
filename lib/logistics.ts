@@ -40,9 +40,20 @@ export interface Logistics {
   recipient_name: string;
   recipient_phone: string;
   delivery_address: string;
+  delivery_location: string | null;
   city: string | null;
   state: string | null;
+  region: string | null;
   country: string | null;
+  delivery_cost: string | null;
+  amount_paid: string | null;
+  payment_method: string | null;
+  payment_status: string | null;
+  payment_reference: string | null;
+  payment_date: string | null;
+  cheque_number: string | null;
+  bank_name: string | null;
+  cheque_maturity_date: string | null;
   dispatch_time: string | null;
   estimated_delivery_time: string | null;
   actual_delivery_time: string | null;
@@ -257,7 +268,24 @@ export interface CreateLogisticsData {
   recipient_name?: string;
   recipient_phone?: string;
   delivery_address?: string;
+  // Human-readable delivery destination (e.g. a landmark or building name),
+  // paired with a county/region picked from Kenya's administrative units.
+  delivery_location?: string;
   city?: string;
+  state?: string;
+  region?: string;
+  country?: string;
+  // What was paid to the delivery/logistics provider for this dispatch -
+  // distinct from the customer's payment for the goods themselves.
+  delivery_cost?: number;
+  amount_paid?: number;
+  payment_method?: string;
+  payment_reference?: string;
+  payment_date?: string;
+  // Only meaningful when payment_method is "cheque".
+  cheque_number?: string;
+  bank_name?: string;
+  cheque_maturity_date?: string;
   estimated_delivery_time?: string;
   notes?: string;
 }

@@ -117,7 +117,11 @@ export function ViewAccountModal({ open, onOpenChange, account, onRefresh }: Vie
                 </div>
                 <div>
                   <p className="text-sm text-blue-600 font-medium">Credit Period</p>
-                  <p className="text-lg font-bold text-gray-900">{account.credit_period_required || "N/A"}</p>
+                  <p className="text-lg font-bold text-gray-900">
+                    {account.credit_days
+                      ? `${account.credit_days} days`
+                      : account.credit_period_required || "N/A"}
+                  </p>
                 </div>
               </div>
             </div>
@@ -241,6 +245,12 @@ export function ViewAccountModal({ open, onOpenChange, account, onRefresh }: Vie
                     <p className="font-medium">{account.credit_terms}</p>
                   </div>
                 )}
+                {account.credit_period_pd_cheque_days ? (
+                  <div className="flex justify-between items-center">
+                    <p className="text-sm text-muted-foreground">Credit Period (PD Cheques)</p>
+                    <p className="font-medium">{account.credit_period_pd_cheque_days} days</p>
+                  </div>
+                ) : null}
                 <div className="flex justify-between items-center">
                   <p className="text-sm text-muted-foreground">Currently Defaulted</p>
                   <div className="flex items-center gap-2">
@@ -271,7 +281,7 @@ export function ViewAccountModal({ open, onOpenChange, account, onRefresh }: Vie
             </div>
             
             {/* Company Information - Only show if there's data */}
-            {(account.certificate_of_incorporation_number || account.annual_turnover) && (
+            {(account.certificate_of_incorporation_number || account.annual_turnover || account.company_type) && (
               <>
                 <Separator />
                 <div className="space-y-4">
@@ -281,6 +291,12 @@ export function ViewAccountModal({ open, onOpenChange, account, onRefresh }: Vie
                   </h3>
                   <div className="bg-white border border-gray-200 rounded-lg p-4">
                     <div className="space-y-4">
+                      {account.company_type && (
+                        <div className="flex justify-between items-center">
+                          <p className="text-sm text-muted-foreground">Company Type</p>
+                          <p className="font-medium">{account.company_type}</p>
+                        </div>
+                      )}
                       {account.certificate_of_incorporation_number && (
                         <div className="flex justify-between items-center">
                           <p className="text-sm text-muted-foreground">Certificate of Incorporation</p>

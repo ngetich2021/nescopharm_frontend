@@ -36,7 +36,8 @@ export default function ChequesPage() {
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold">Cheques</h1>
             <p className="text-sm text-muted-foreground">
-              Post-dated cheques received from customers. Only approved cheques count as receivables.
+              Post-dated cheques received from customers and issued to suppliers. The MD and GM are alerted a
+              week before any pending cheque matures.
             </p>
           </div>
         </div>

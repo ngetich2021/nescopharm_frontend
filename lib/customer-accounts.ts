@@ -61,6 +61,7 @@ export interface CustomerAccount {
   credit_required?: string | null
   credit_period_required?: string | null
   credit_days?: number | null
+  credit_period_pd_cheque_days?: number | null
   currently_defaulted: boolean
   credit_terms?: string | null
   current_balance?: string | null
@@ -145,10 +146,12 @@ export interface CustomerAccountApproval {
 export interface CreateCustomerAccountPayload {
   customer_id: string;
   certificate_of_incorporation_number?: string | null;
+  company_type?: string | null;
   annual_turnover?: number | null;
   credit_required?: number | null;
   credit_period_required?: string | null;
   credit_days?: number | null;
+  credit_period_pd_cheque_days?: number | null;
   currently_defaulted: boolean;
   credit_terms?: string | null;
   notes?: string | null;

@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge"
 import { CustomerOrders } from "./customer-orders"
 import { CustomerPayments } from "./customer-payments"
 import { CustomerCredit } from "./customer-credit"
+import { CustomerCheques } from "./customer-cheques"
+import { fetchCheques, Cheque } from "@/lib/cheques"
 import { ApplicationStatusSection } from "./application-status-section"
 import {
   X,
@@ -35,6 +37,7 @@ import {
   ShoppingCart,
   CreditCard,
   History,
+  Landmark,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import {
@@ -120,6 +123,7 @@ export function CustomerProfile({ customerId, isOpen, onClose }: CustomerProfile
   // const [customerActivities, setCustomerActivities] = useState<CustomerActivity[]>([])
   const [customerOrders, setCustomerOrders] = useState<ExtendedOrder[]>([]) // New state for orders with extended type
   const [customerPayments, setCustomerPayments] = useState<Payment[]>([]) // New state for payments
+  const [customerCheques, setCustomerCheques] = useState<Cheque[]>([]) // PD cheques received - tab only shows when non-empty
   const [taskDescription, setTaskDescription] = useState("")
   const [taskDueDate, setTaskDueDate] = useState("")
   const [checklistItems, setChecklistItems] = useState<string[]>([""])
@@ -147,6 +151,21 @@ export function CustomerProfile({ customerId, isOpen, onClose }: CustomerProfile
       setVisibleMessages([])
       setHasMoreMessages(false)
       setIsLoadingChat(false)
+    }
+  }, [customerId, isOpen])
+
+  useEffect(() => {
+    if (!isOpen || !customerId) return
+    let cancelled = false
+    fetchCheques({ customer_id: customerId, direction: "received" })
+      .then((data) => {
+        if (!cancelled) setCustomerCheques(data)
+      })
+      .catch(() => {
+        if (!cancelled) setCustomerCheques([])
+      })
+    return () => {
+      cancelled = true
     }
   }, [customerId, isOpen])
 
@@ -898,6 +917,15 @@ export function CustomerProfile({ customerId, isOpen, onClose }: CustomerProfile
                     <History className="h-5 w-5" />
                     <span>Credit</span>
                   </TabsTrigger>
+                  {customerCheques.length > 0 && (
+                    <TabsTrigger
+                      value="cheques"
+                      className="data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none px-2 py-4 h-full bg-transparent flex items-center gap-2 transition-all font-medium"
+                    >
+                      <Landmark className="h-5 w-5" />
+                      <span>PD Cheques</span>
+                    </TabsTrigger>
+                  )}
                 </TabsList>
               </div>
             </div>
@@ -1208,6 +1236,12 @@ export function CustomerProfile({ customerId, isOpen, onClose }: CustomerProfile
             <TabsContent value="credit" className="p-0 m-0">
               <CustomerCredit customerId={customerId} />
             </TabsContent>
+
+            {customerCheques.length > 0 && (
+              <TabsContent value="cheques" className="p-4 m-0">
+                <CustomerCheques customerId={customerId} initialCheques={customerCheques} />
+              </TabsContent>
+            )}
           </Tabs>
         </div>
       </div>

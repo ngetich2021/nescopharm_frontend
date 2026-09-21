@@ -36,6 +36,9 @@ import {
   XCircle,
   Ban,
   Paperclip,
+  Plus,
+  ArrowDownToLine,
+  ArrowUpFromLine,
 } from "lucide-react"
 import { toast } from "@/components/ui/use-toast"
 import {
@@ -48,6 +51,7 @@ import {
   getChequeStatusColor,
 } from "@/lib/cheques"
 import { formatCurrency, formatDate } from "@/lib/utils"
+import { RecordIssuedChequeModal } from "./record-issued-cheque-modal"
 
 interface ChequesTableProps {
   initialCheques?: Cheque[]
@@ -66,7 +70,9 @@ export function ChequesTable({ initialCheques = [] }: ChequesTableProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
+  const [directionFilter, setDirectionFilter] = useState<string>("all")
   const [actioningId, setActioningId] = useState<string | null>(null)
+  const [showRecordIssued, setShowRecordIssued] = useState(false)
 
   const refreshCheques = useCallback(async () => {
     setIsLoading(true)
@@ -100,10 +106,11 @@ export function ChequesTable({ initialCheques = [] }: ChequesTableProps) {
         cheque.invoice?.invoice_number?.toLowerCase().includes(searchQuery.toLowerCase())
 
       const matchesStatus = statusFilter === "all" || cheque.status === statusFilter
+      const matchesDirection = directionFilter === "all" || cheque.direction === directionFilter
 
-      return matchesSearch && matchesStatus
+      return matchesSearch && matchesStatus && matchesDirection
     })
-  }, [cheques, searchQuery, statusFilter])
+  }, [cheques, searchQuery, statusFilter, directionFilter])
 
   const handleAction = async (
     cheque: Cheque,
@@ -148,12 +155,14 @@ export function ChequesTable({ initialCheques = [] }: ChequesTableProps) {
               handleAction(
                 cheque,
                 approveCheque,
-                `Cheque ${cheque.cheque_number} approved and applied to the invoice.`
+                cheque.direction === "issued"
+                  ? `Cheque ${cheque.cheque_number} marked as cleared.`
+                  : `Cheque ${cheque.cheque_number} approved and applied to the invoice.`
               )
             }
           >
             <CheckCircle2 className="h-4 w-4 mr-2 text-green-600" />
-            Approve (Matured)
+            {cheque.direction === "issued" ? "Mark Cleared" : "Approve (Matured)"}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
@@ -213,27 +222,51 @@ export function ChequesTable({ initialCheques = [] }: ChequesTableProps) {
               <SelectItem value="cancelled">Cancelled</SelectItem>
             </SelectContent>
           </Select>
+
+          <Select value={directionFilter} onValueChange={setDirectionFilter}>
+            <SelectTrigger className="w-[160px]">
+              <SelectValue placeholder="All Cheques" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Received &amp; Issued</SelectItem>
+              <SelectItem value="received">Received (from customers)</SelectItem>
+              <SelectItem value="issued">Issued (to suppliers)</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={refreshCheques}
-          disabled={isLoading}
-          className="border-gray-800 text-gray-800 hover:bg-gray-100 w-fit"
-        >
-          <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""} mr-2`} />
-          Refresh
-        </Button>
+        <div className="flex gap-2">
+          <Button size="sm" onClick={() => setShowRecordIssued(true)} className="w-fit">
+            <Plus className="h-4 w-4 mr-2" />
+            Record Issued Cheque
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={refreshCheques}
+            disabled={isLoading}
+            className="border-gray-800 text-gray-800 hover:bg-gray-100 w-fit"
+          >
+            <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""} mr-2`} />
+            Refresh
+          </Button>
+        </div>
       </div>
+
+      <RecordIssuedChequeModal
+        open={showRecordIssued}
+        onOpenChange={setShowRecordIssued}
+        onSuccess={refreshCheques}
+      />
 
       <div className="rounded-md border bg-white">
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead className="font-semibold">Cheque #</TableHead>
+              <TableHead className="font-semibold">Direction</TableHead>
               <TableHead className="font-semibold">Bank</TableHead>
-              <TableHead className="font-semibold">Customer</TableHead>
+              <TableHead className="font-semibold">Party</TableHead>
               <TableHead className="font-semibold">Invoice</TableHead>
               <TableHead className="font-semibold">Amount</TableHead>
               <TableHead className="font-semibold">Issue Date</TableHead>
@@ -245,7 +278,7 @@ export function ChequesTable({ initialCheques = [] }: ChequesTableProps) {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={9} className="h-24 text-center">
+                <TableCell colSpan={10} className="h-24 text-center">
                   <div className="flex items-center justify-center space-x-2">
                     <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
                     <span>Loading cheques...</span>
@@ -254,7 +287,7 @@ export function ChequesTable({ initialCheques = [] }: ChequesTableProps) {
               </TableRow>
             ) : filteredCheques.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} className="h-24 text-center">
+                <TableCell colSpan={10} className="h-24 text-center">
                   <div className="text-gray-500">
                     <p className="font-semibold">No cheques found</p>
                     <p className="text-sm">Cheques recorded from invoice payments will appear here</p>
@@ -280,9 +313,26 @@ export function ChequesTable({ initialCheques = [] }: ChequesTableProps) {
                       )}
                     </div>
                   </TableCell>
+                  <TableCell>
+                    {cheque.direction === "issued" ? (
+                      <Badge variant="outline" className="gap-1 text-orange-700 border-orange-300 bg-orange-50">
+                        <ArrowUpFromLine className="h-3 w-3" /> Issued
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="gap-1 text-blue-700 border-blue-300 bg-blue-50">
+                        <ArrowDownToLine className="h-3 w-3" /> Received
+                      </Badge>
+                    )}
+                  </TableCell>
                   <TableCell>{cheque.bank_name}</TableCell>
-                  <TableCell>{cheque.customer ? getCustomerDisplayName(cheque.customer) : "-"}</TableCell>
-                  <TableCell>{cheque.invoice?.invoice_number || "-"}</TableCell>
+                  <TableCell>
+                    {cheque.direction === "issued"
+                      ? cheque.payee_display_name || cheque.supplier?.name || "-"
+                      : cheque.customer
+                        ? getCustomerDisplayName(cheque.customer)
+                        : "-"}
+                  </TableCell>
+                  <TableCell>{cheque.invoice?.invoice_number || cheque.purchase_order?.order_number || "-"}</TableCell>
                   <TableCell className="font-medium">{formatCurrency(cheque.amount)}</TableCell>
                   <TableCell>{formatDate(cheque.issue_date)}</TableCell>
                   <TableCell>

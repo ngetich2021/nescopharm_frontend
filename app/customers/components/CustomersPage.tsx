@@ -66,9 +66,8 @@ export function CustomersPage() {
     }
   };
 
-  // Filter customers by search and sort by name ascending
+  // Filter customers by search; ordering (most recent first) comes from the API
   const filteredCustomers = customers
-    .sort((a, b) => a.name?.localeCompare(b.name || "") || 0)
     .filter((customer) => {
     const searchLower = search.toLowerCase();
     return (

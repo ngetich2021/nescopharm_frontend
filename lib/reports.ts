@@ -117,12 +117,14 @@ export interface SalesReportResponse {
  * Fetches inventory report data.
  */
 export async function getInventoryReport(params: {
-  type?: 'balance' | 'low_stock' | 'movement';
+  type?: 'balance' | 'low_stock' | 'movement' | 'stock_management';
   category?: string;
   category_id?: string;
   store_id?: string;
   status?: string;
   brand?: string;
+  date_from?: string;
+  date_to?: string;
 }): Promise<any> {
   try {
     const queryParams = new URLSearchParams();
@@ -132,6 +134,8 @@ export async function getInventoryReport(params: {
     if (params.store_id) queryParams.append('store_id', params.store_id);
     if (params.status) queryParams.append('status', params.status);
     if (params.brand) queryParams.append('brand', params.brand);
+    if (params.date_from) queryParams.append('date_from', params.date_from);
+    if (params.date_to) queryParams.append('date_to', params.date_to);
 
     const data = await apiCall<any>(`/reports/inventory?${queryParams.toString()}`, "GET");
     return data;

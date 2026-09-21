@@ -39,6 +39,8 @@ const lineItemSchema = z.object({
   description: z.string().min(1, "Description is required"),
   quantity: z.number().min(0.01, "Quantity must be at least 0.01"),
   unit: z.string().min(1, "Unit is required"),
+  batch_number: z.string().optional(),
+  expiry_date: z.string().optional(),
   unit_price: z.number().min(0, "Unit price must be non-negative"),
   etims_tax_type_code: z.enum(['A', 'B', 'C', 'D', 'E']),
 })
@@ -52,6 +54,18 @@ const invoiceSchema = z.object({
   payment_terms: z.string().optional(),
   notes: z.string().optional(),
   terms_and_conditions: z.string().optional(),
+  delivery_note_number: z.string().optional(),
+  delivery_note_date: z.string().optional(),
+  reference_number: z.string().optional(),
+  reference_date: z.string().optional(),
+  other_references: z.string().optional(),
+  buyers_order_no: z.string().optional(),
+  buyers_order_date: z.string().optional(),
+  dispatch_doc_no: z.string().optional(),
+  dispatched_through: z.string().optional(),
+  destination: z.string().optional(),
+  terms_of_delivery: z.string().optional(),
+  mode_of_payment: z.string().optional(),
   discount_enabled: z.boolean(),
   discount_type: z.enum(['percentage', 'amount']),
   discount_value: z.number().min(0, "Discount must be non-negative"),
@@ -129,11 +143,25 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
       payment_terms: '',
       notes: '',
       terms_and_conditions: 'Standard terms and conditions apply',
+      delivery_note_number: '',
+      delivery_note_date: '',
+      reference_number: '',
+      reference_date: '',
+      other_references: '',
+      buyers_order_no: '',
+      buyers_order_date: '',
+      dispatch_doc_no: '',
+      dispatched_through: '',
+      destination: '',
+      terms_of_delivery: '',
+      mode_of_payment: '',
       line_items: [
         {
           description: '',
           quantity: 1,
           unit: 'pcs',
+          batch_number: '',
+          expiry_date: '',
           unit_price: 0,
           etims_tax_type_code: 'D',
         }
@@ -377,6 +405,18 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
         payment_terms: paymentOption === 'credit' ? (data.payment_terms || undefined) : undefined,
         notes: data.notes,
         terms_and_conditions: data.terms_and_conditions,
+        delivery_note_number: data.delivery_note_number || undefined,
+        delivery_note_date: data.delivery_note_date || undefined,
+        reference_number: data.reference_number || undefined,
+        reference_date: data.reference_date || undefined,
+        other_references: data.other_references || undefined,
+        buyers_order_no: data.buyers_order_no || undefined,
+        buyers_order_date: data.buyers_order_date || undefined,
+        dispatch_doc_no: data.dispatch_doc_no || undefined,
+        dispatched_through: data.dispatched_through || undefined,
+        destination: data.destination || undefined,
+        terms_of_delivery: data.terms_of_delivery || undefined,
+        mode_of_payment: data.mode_of_payment || undefined,
         generate_etims_receipt: data.generate_etims_receipt,
         line_items: lineItemsWithCalculations
       }
@@ -425,6 +465,8 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
       description: '',
       quantity: 1,
       unit: 'pcs',
+      batch_number: '',
+      expiry_date: '',
       unit_price: 0,
       etims_tax_type_code: 'D',
     })
@@ -873,6 +915,63 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
             </div>
           </div>
 
+          {/* Reference & Dispatch Details - all optional, printed on the invoice document */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Reference &amp; Dispatch Details (optional)</CardTitle>
+            </CardHeader>
+            <CardContent className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">Delivery Note No.</Label>
+                <Input {...form.register('delivery_note_number')} className="h-8 text-sm" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">Delivery Note Date</Label>
+                <Input type="date" {...form.register('delivery_note_date')} className="h-8 text-sm" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">Mode/Terms of Payment</Label>
+                <Input {...form.register('mode_of_payment')} placeholder="e.g. Cash On Delivery" className="h-8 text-sm" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">Reference No.</Label>
+                <Input {...form.register('reference_number')} className="h-8 text-sm" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">Reference Date</Label>
+                <Input type="date" {...form.register('reference_date')} className="h-8 text-sm" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">Other References</Label>
+                <Input {...form.register('other_references')} className="h-8 text-sm" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">Buyer's Order No.</Label>
+                <Input {...form.register('buyers_order_no')} className="h-8 text-sm" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">Buyer's Order Date</Label>
+                <Input type="date" {...form.register('buyers_order_date')} className="h-8 text-sm" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">Dispatch Doc No.</Label>
+                <Input {...form.register('dispatch_doc_no')} className="h-8 text-sm" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">Dispatched Through</Label>
+                <Input {...form.register('dispatched_through')} placeholder="e.g. Local Riders" className="h-8 text-sm" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">Destination</Label>
+                <Input {...form.register('destination')} className="h-8 text-sm" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">Terms of Delivery</Label>
+                <Input {...form.register('terms_of_delivery')} className="h-8 text-sm" />
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Line Items */}
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-3">
@@ -1050,6 +1149,25 @@ export function CreateInvoiceModal({ open, onClose, onSuccess }: CreateInvoiceMo
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-12 gap-3 items-end">
+                    <div className="col-span-3">
+                      <Label className="text-xs font-medium">Batch No.</Label>
+                      <Input
+                        placeholder="Optional"
+                        {...form.register(`line_items.${index}.batch_number`)}
+                        className="h-8 text-sm mt-1"
+                      />
+                    </div>
+                    <div className="col-span-3">
+                      <Label className="text-xs font-medium">Expiry Date</Label>
+                      <Input
+                        type="date"
+                        {...form.register(`line_items.${index}.expiry_date`)}
+                        className="h-8 text-sm mt-1"
+                      />
                     </div>
                   </div>
 

@@ -26,6 +26,18 @@ export interface Invoice {
   payment_terms?: string;
   notes?: string;
   terms_and_conditions?: string;
+  delivery_note_number?: string | null;
+  delivery_note_date?: string | null;
+  reference_number?: string | null;
+  reference_date?: string | null;
+  other_references?: string | null;
+  buyers_order_no?: string | null;
+  buyers_order_date?: string | null;
+  dispatch_doc_no?: string | null;
+  dispatched_through?: string | null;
+  destination?: string | null;
+  terms_of_delivery?: string | null;
+  mode_of_payment?: string | null;
   sent_at?: string;
   viewed_at?: string;
   paid_at?: string;
@@ -55,6 +67,7 @@ export interface Invoice {
     address?: string;
     customer_type?: 'individual' | 'company' | null;
     business_name?: string | null;
+    pin_number?: string | null;
   };
   sales_rep?: {
     id: string;
@@ -101,6 +114,8 @@ export interface InvoiceLineItem {
   description: string;
   quantity: number | string;
   unit: string;
+  batch_number?: string | null;
+  expiry_date?: string | null;
   unit_price: number | string;
   discount_amount: number | string;
   tax_rate: number | string;
@@ -143,6 +158,18 @@ export interface CreateInvoiceRequest {
   payment_terms?: string;
   notes?: string;
   terms_and_conditions?: string;
+  delivery_note_number?: string;
+  delivery_note_date?: string;
+  reference_number?: string;
+  reference_date?: string;
+  other_references?: string;
+  buyers_order_no?: string;
+  buyers_order_date?: string;
+  dispatch_doc_no?: string;
+  dispatched_through?: string;
+  destination?: string;
+  terms_of_delivery?: string;
+  mode_of_payment?: string;
   generate_etims_receipt?: boolean;
   line_items: {
     product_id?: string;
@@ -150,6 +177,8 @@ export interface CreateInvoiceRequest {
     description: string;
     quantity: number;
     unit: string;
+    batch_number?: string;
+    expiry_date?: string;
     unit_price: number;
     discount_amount: number;
     tax_rate: number;

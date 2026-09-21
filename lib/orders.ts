@@ -75,6 +75,12 @@ export interface OrderDetail extends Order {
       }>
       display_text: string
     } | null
+    batch_allocations?: Array<{
+      batch_id: string
+      batch_number: string
+      quantity: number
+      expiry_date: string | null
+    }> | null
     packagingUnit?: {
       id: string
       unit_name: string

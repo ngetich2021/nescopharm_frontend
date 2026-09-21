@@ -19,7 +19,7 @@ import {
 import type { Employee } from "@/lib/employees";
 import type { LeaveRequest } from "@/lib/leave";
 import type { SalaryAdvanceRequest } from "@/lib/salary-advance";
-import { Briefcase, CalendarDays, CreditCard, UserRound } from "lucide-react";
+import { Briefcase, CalendarDays, CreditCard, UserRound, FileBarChart, ShieldCheck } from "lucide-react";
 
 const STATUS_STYLES: Record<string, string> = {
   approved: "bg-green-100 text-green-800",
@@ -236,9 +236,11 @@ export default function EmployeePortalPage() {
       </div>
 
       <Tabs defaultValue="leave" className="space-y-4">
-        <TabsList className="grid w-full max-w-md grid-cols-2">
+        <TabsList className="grid w-full max-w-2xl grid-cols-4">
           <TabsTrigger value="leave">Leave</TabsTrigger>
           <TabsTrigger value="salary">Salary Advance</TabsTrigger>
+          <TabsTrigger value="daily-reports">Daily Reports</TabsTrigger>
+          <TabsTrigger value="data-privacy">Data Privacy &amp; Security</TabsTrigger>
         </TabsList>
 
         <TabsContent value="leave" className="grid gap-4 xl:grid-cols-[1.05fr_1.2fr]">
@@ -357,6 +359,26 @@ export default function EmployeePortalPage() {
                   </div>
                 ))
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="daily-reports">
+          <Card className="shadow-sm">
+            <CardContent className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+              <FileBarChart className="h-10 w-10 text-muted-foreground" />
+              <p className="text-lg font-semibold">Daily Reports</p>
+              <p className="text-sm text-muted-foreground">coming soon ...</p>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="data-privacy">
+          <Card className="shadow-sm">
+            <CardContent className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+              <ShieldCheck className="h-10 w-10 text-muted-foreground" />
+              <p className="text-lg font-semibold">Data Privacy and Security</p>
+              <p className="text-sm text-muted-foreground">coming soon ...</p>
             </CardContent>
           </Card>
         </TabsContent>

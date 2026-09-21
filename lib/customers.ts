@@ -192,7 +192,8 @@ export function getCustomerDisplayName(
 
 // Interface for the detailed customer profile response
 export interface CustomerProfileData extends Omit<Customer, 'notes'> {
-  notes: CustomerNote[] | string | null // Can be array of notes, string, or null
+  notes: string | null // The customer's own plain notes column - a real CustomerNote[] collides on this key, so it's returned separately below
+  customer_notes: CustomerNote[] // Actual CustomerNote records (e.g. auto-generated monthly statements), newest first
   orders: Order[] // Array of Order
   activities: CustomerActivity[] // Array of CustomerActivity
   quotes: Quote[] // Array of Quote

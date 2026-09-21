@@ -533,6 +533,27 @@ type ProductReceiptFormValues = z.infer<typeof formSchema>;
         });
         return false;
       }
+
+      if (item.individual_serials !== undefined) {
+        const blankIndex = item.individual_serials.findIndex((s) => !s.trim());
+        if (blankIndex !== -1) {
+          toast({
+            title: "Validation Error",
+            description: `Enter a serial number for "${item.product?.name || "this item"}" (#${blankIndex + 1} is blank), or turn off individual serial numbers for it`,
+            variant: "destructive",
+          });
+          return false;
+        }
+        const trimmed = item.individual_serials.map((s) => s.trim());
+        if (new Set(trimmed).size !== trimmed.length) {
+          toast({
+            title: "Validation Error",
+            description: `Duplicate serial numbers entered for "${item.product?.name || "this item"}"`,
+            variant: "destructive",
+          });
+          return false;
+        }
+      }
     }
 
     return true;
@@ -577,7 +598,14 @@ type ProductReceiptFormValues = z.infer<typeof formSchema>;
             lot_number: item.lot_number || undefined,
             serial_number: item.serial_number || undefined,
             manufacture_date: item.manufacture_date || undefined,
-            individual_serials: item.individual_serials || undefined,
+            // Backend reads serial_numbers (+ track_serials to auto-generate
+            // when none are typed in) - individual_serials was a dead key
+            // the API never looked at, so anything typed here was silently
+            // discarded before this fix.
+            ...(item.individual_serials !== undefined && {
+              serial_numbers: item.individual_serials.map((s) => s.trim()),
+              track_serials: true,
+            }),
           }),
         })),
         document: document,
