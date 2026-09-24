@@ -2,6 +2,7 @@ import apiCall from "./api";
 import type { Employee } from "./employees";
 import type { LeaveRequest } from "./leave";
 import type { SalaryAdvanceRequest } from "./salary-advance";
+import type { DailyWorkReport, DailyWorkReportEntry } from "./daily-reports";
 
 export async function getEmployeePortalProfile(): Promise<Employee> {
   const response = await apiCall<{ employee: Employee }>("/employee-portal/me", "GET");
@@ -37,4 +38,22 @@ export async function createEmployeePortalSalaryAdvance(data: {
 }): Promise<SalaryAdvanceRequest> {
   const response = await apiCall<{ salary_advance: SalaryAdvanceRequest }>("/employee-portal/salary-advances", "POST", data);
   return response.salary_advance;
+}
+
+export async function getEmployeePortalDailyReports(status?: string): Promise<DailyWorkReport[]> {
+  const query = status ? `?status=${encodeURIComponent(status)}` : "";
+  const response = await apiCall<{ daily_reports: DailyWorkReport[] }>(`/employee-portal/daily-reports${query}`, "GET");
+  return response.daily_reports || [];
+}
+
+export async function createEmployeePortalDailyReport(data: {
+  report_date: string;
+  designation?: string;
+  department?: string;
+  entries: DailyWorkReportEntry[];
+  key_achievements?: string;
+  pending_work?: string;
+}): Promise<DailyWorkReport> {
+  const response = await apiCall<{ daily_report: DailyWorkReport }>("/employee-portal/daily-reports", "POST", data);
+  return response.daily_report;
 }

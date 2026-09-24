@@ -30,7 +30,7 @@ import {
   Printer,
   Maximize2
 } from "lucide-react"
-import { fetchInvoiceById, deleteInvoice, Invoice, sendInvoice, fetchSalesReps, assignSalesRep, SalesRep } from "@/lib/invoices"
+import { fetchInvoiceById, deleteInvoice, Invoice, sendInvoice, fetchSalesReps, assignSalesRep, SalesRep, fetchInvoicePaymentHistory } from "@/lib/invoices"
 import { getInvoiceStatusColor, getInvoiceStatusLabel } from "@/lib/invoice-status"
 import { SendInvoiceModal } from "@/components/modals/send-invoice-modal"
 import apiCall from "@/lib/api"
@@ -71,10 +71,21 @@ export default function InvoiceDetailPage() {
 
   // Send Invoice Modal state
   const [isSendInvoiceModalOpen, setIsSendInvoiceModalOpen] = useState(false)
+  // Unapplied excess sitting on this invoice's payment(s) - e.g. the customer
+  // paid more than the invoice total in one lump sum. Refundable from Payment
+  // History. Fetched separately since the invoice's own balance doesn't
+  // reflect it (a Payment's excess isn't allocated to this invoice at all).
+  const [refundableAmount, setRefundableAmount] = useState(0)
 
   useEffect(() => {
     if (params.id) {
       loadInvoice(params.id as string)
+      fetchInvoicePaymentHistory(params.id as string)
+        .then((history) => {
+          const total = (history.payments || []).reduce((sum, p) => sum + (p.available_to_refund || 0), 0)
+          setRefundableAmount(total)
+        })
+        .catch(() => setRefundableAmount(0))
     }
   }, [params.id])
 
@@ -572,15 +583,13 @@ export default function InvoiceDetailPage() {
               <CardContent className="space-y-2">
                 <div>
                   <p className="font-medium text-lg">
-                    {/* Use customerDetails for customer_type and business_name, fallback to invoice.customer */}
-                    {(customerDetails?.customer_type === 'company' || invoice.customer?.customer_type === 'company') && 
-                     (customerDetails?.business_name || invoice.customer?.business_name)
-                      ? (customerDetails?.business_name || invoice.customer?.business_name)
-                      : (customerDetails?.name || invoice.customer?.name)}
+                    {/* Show a captured business name whenever it exists, not
+                        just for customer_type === 'company' - individuals can
+                        fill this in too now. */}
+                    {(customerDetails?.business_name || invoice.customer?.business_name)
+                      || (customerDetails?.name || invoice.customer?.name)}
                   </p>
-                  {/* Show contact person for company customers */}
-                  {(customerDetails?.customer_type === 'company' || invoice.customer?.customer_type === 'company') && 
-                   (customerDetails?.business_name || invoice.customer?.business_name) && (
+                  {(customerDetails?.business_name || invoice.customer?.business_name) && (
                     <p className="text-sm text-muted-foreground">
                       Contact: {customerDetails?.name || invoice.customer?.name}
                     </p>
@@ -749,6 +758,24 @@ export default function InvoiceDetailPage() {
                     ✓ Invoice fully paid
                   </div>
                 )}
+
+                {refundableAmount > 0 && (
+                  <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800 space-y-2">
+                    <p>
+                      This invoice's payment has <strong>{formatCurrency(refundableAmount)}</strong> unapplied -
+                      it was paid for more than the invoice total.
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => setIsPaymentHistoryModalOpen(true)}
+                    >
+                      Refund the excess
+                    </Button>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -899,15 +926,12 @@ export default function InvoiceDetailPage() {
                       {(invoice.customer || customerDetails) ? (
                         <>
                           <p className="font-medium">
-                            {/* Use customerDetails for customer_type and business_name, fallback to invoice.customer */}
-                            {(customerDetails?.customer_type === 'company' || invoice.customer?.customer_type === 'company') && 
-                             (customerDetails?.business_name || invoice.customer?.business_name)
-                              ? (customerDetails?.business_name || invoice.customer?.business_name)
-                              : (customerDetails?.name || invoice.customer?.name)}
+                            {/* Show a captured business name whenever it exists,
+                                not just for customer_type === 'company'. */}
+                            {(customerDetails?.business_name || invoice.customer?.business_name)
+                              || (customerDetails?.name || invoice.customer?.name)}
                           </p>
-                          {/* Show contact person name if customer is a company */}
-                          {(customerDetails?.customer_type === 'company' || invoice.customer?.customer_type === 'company') && 
-                           (customerDetails?.business_name || invoice.customer?.business_name) && (
+                          {(customerDetails?.business_name || invoice.customer?.business_name) && (
                             <p className="text-gray-600">c/o {customerDetails?.name || invoice.customer?.name}</p>
                           )}
                           {(customerDetails?.phone || invoice.customer?.phone) && <p>{customerDetails?.phone || invoice.customer?.phone}</p>}
@@ -1039,7 +1063,15 @@ export default function InvoiceDetailPage() {
 
           <PaymentHistoryModal
             isOpen={isPaymentHistoryModalOpen}
-            onClose={() => setIsPaymentHistoryModalOpen(false)}
+            onClose={() => {
+              setIsPaymentHistoryModalOpen(false)
+              fetchInvoicePaymentHistory(invoice.id)
+                .then((history) => {
+                  const total = (history.payments || []).reduce((sum, p) => sum + (p.available_to_refund || 0), 0)
+                  setRefundableAmount(total)
+                })
+                .catch(() => {})
+            }}
             invoiceId={invoice.id}
             invoiceNumber={invoice.invoice_number}
           />

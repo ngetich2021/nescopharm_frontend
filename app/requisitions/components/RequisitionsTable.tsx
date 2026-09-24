@@ -1,6 +1,7 @@
 "use client";
 
 import { format } from "date-fns";
+import { useAuth } from "@/lib/auth-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -332,9 +333,10 @@ function ActionsDropdown({
   onApprove: () => void;
   onCreateDispatch: () => void;
 }) {
-  const canEdit = requisition.status === "pending" && requisition.approval_status === "pending";
-  const canDelete = requisition.status === "pending" && requisition.approval_status === "pending";
-  const canApprove = requisition.approval_status === "pending";
+  const { hasPermission } = useAuth();
+  const canEdit = requisition.status === "pending" && requisition.approval_status === "pending" && hasPermission("can_update_requisitions");
+  const canDelete = requisition.status === "pending" && requisition.approval_status === "pending" && hasPermission("can_delete_requisitions");
+  const canApprove = requisition.approval_status === "pending" && hasPermission("can_approve_requisitions");
   const canCreateDispatch = requisition.approval_status === "approved" && !requisition.dispatch_id;
 
   return (

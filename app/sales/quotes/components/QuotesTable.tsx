@@ -79,7 +79,7 @@ export function QuotesTable({
     const rawStatus = status || "Unknown"
     return rawStatus
       .replace(/[^\w\s]/gi, "")
-      .split(" ")
+      .split(/[\s_]+/)
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
       .join(" ")
   }
@@ -91,9 +91,7 @@ export function QuotesTable({
       ...quotes.map((quote) =>
         [
           formatQuoteNumber(quote),
-          (quote.customer as any)?.customer_type === "company"
-            ? ((quote.customer as any)?.business_name || quote.customer?.name || "Unknown")
-            : (quote.customer?.name || "Unknown"),
+          (quote.customer as any)?.business_name || quote.customer?.name || "Unknown",
           new Date(quote.created_at).toLocaleDateString(),
           formatStatus(quote.status),
           new Date(quote.valid_until).toLocaleDateString(),
@@ -296,7 +294,7 @@ export function QuotesTable({
                       </span>
                       {quote.submitted_by_id && (
                         <Badge variant="outline" className="w-fit bg-blue-50 text-blue-800 border-blue-400 text-[11px] font-normal">
-                          From: {quote.submittedBy?.name || "Rep"} · {new Date(quote.submitted_at || quote.created_at).toLocaleDateString()}{" "}
+                          From: {quote.submittedBy?.full_name || [quote.submittedBy?.first_name, quote.submittedBy?.last_name].filter(Boolean).join(" ") || "Rep"} · {new Date(quote.submitted_at || quote.created_at).toLocaleDateString()}{" "}
                           {new Date(quote.submitted_at || quote.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · Needs Review
                         </Badge>
                       )}
@@ -305,10 +303,7 @@ export function QuotesTable({
                   <TableCell>
                     <div className="flex flex-col">
                       <span className="text-sm font-medium">
-                        {(quote.customer as any)?.customer_type === "company"
-                          ? ((quote.customer as any)?.business_name || quote.customer?.name || "Unknown Customer")
-                          : (quote.customer?.name || "Unknown Customer")
-                        }
+                        {(quote.customer as any)?.business_name || quote.customer?.name || "Unknown Customer"}
                       </span>
                       <span className="text-xs text-gray-500">
                         {quote.customer?.email || "No email"}
@@ -332,6 +327,8 @@ export function QuotesTable({
 
                       if (statusLower.includes("accepted")) {
                         badgeClass = "bg-green-100 text-green-800 border-green-500"
+                      } else if (statusLower === "awaiting_rep_confirm") {
+                        badgeClass = "bg-purple-100 text-purple-800 border-purple-500"
                       } else if (statusLower.includes("pending")) {
                         badgeClass = "bg-yellow-100 text-yellow-800 border-yellow-500"
                       } else if (statusLower.includes("rejected")) {

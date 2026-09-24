@@ -178,9 +178,7 @@ export function OrdersTable({ initialOrders = [] }: OrdersTableProps) {
       ...ordersToExport.map((order) =>
         [
           formatOrderNumber(order),
-          (order.customer as any)?.customer_type === "company"
-            ? ((order.customer as any)?.business_name || order.customer?.name || "Unknown")
-            : (order.customer?.name || "Unknown"),
+          (order.customer as any)?.business_name || order.customer?.name || "Unknown",
           new Date(order.created_at).toLocaleDateString(),
           formatStatus(order.status),
           Number.parseFloat(order.final_amount || order.total_amount || "0").toFixed(2),
@@ -399,7 +397,7 @@ export function OrdersTable({ initialOrders = [] }: OrdersTableProps) {
                 return `
                     <tr>
                       <td>${formatOrderNumber(order)}</td>
-                      <td>${(order.customer as any)?.customer_type === "company" ? ((order.customer as any)?.business_name || order.customer?.name || "Unknown") : (order.customer?.name || "Unknown")}</td>
+                      <td>${(order.customer as any)?.business_name || order.customer?.name || "Unknown"}</td>
                       <td>${new Date(order.created_at).toLocaleDateString()}</td>
                       <td>
                         <span class="badge ${badgeClass}">
@@ -600,10 +598,7 @@ export function OrdersTable({ initialOrders = [] }: OrdersTableProps) {
                   <TableCell>
                     <div className="flex flex-col">
                       <span className="text-sm font-medium">
-                        {(order.customer as any)?.customer_type === "company"
-                          ? ((order.customer as any)?.business_name || order.customer?.name || "Unknown Customer")
-                          : (order.customer?.name || "Unknown Customer")
-                        }
+                        {(order.customer as any)?.business_name || order.customer?.name || "Unknown Customer"}
                       </span>
                       <span className="text-xs text-gray-500">
                         {order.customer?.email || "No email"}

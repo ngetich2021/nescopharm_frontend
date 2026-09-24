@@ -49,7 +49,7 @@ export function CustomersPage() {
     try {
       setLoading(true);
       console.log("Fetching customers...");
-      const data = await getCustomers();
+      const data = await getCustomers({ include_pending: true });
       console.log("Data received in fetchCustomers:", data);
       // Ensure we always have an array, even if null or undefined is returned
       setCustomers(Array.isArray(data) ? data : []);

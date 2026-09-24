@@ -157,12 +157,12 @@ export function QuotesPage() {
     }
   }
 
-  const handleConfirmConvert = async () => {
+  const handleConfirmConvert = async (paymentOption?: "instant" | "credit") => {
     if (!quoteToConvert) return
 
     try {
       setIsConverting(quoteToConvert.id)
-      const order = await convertQuoteToOrder(quoteToConvert.id)
+      const order = await convertQuoteToOrder(quoteToConvert.id, { payment_option: paymentOption })
       toast({
         title: "Success",
         description: `Quote ${quoteToConvert.quote_number} has been converted to order successfully.`,

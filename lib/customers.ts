@@ -80,7 +80,8 @@ export interface Customer {
   created_at: string
   updated_at: string
   company_id: string // Added company_id as per API response
-  
+  created_by?: string | null // user id who created this customer record
+
   // New fields for company customers
   business_name?: string | null
   nature_of_business?: string | null
@@ -88,7 +89,8 @@ export interface Customer {
   contact_person_name?: string | null
   contact_person_phone?: string | null
   contact_person_email?: string | null
-  
+  contact_person_designation?: string | null
+
   // Payment method
   payment_method?: string | null
   
@@ -126,11 +128,11 @@ export interface Customer {
     | string
     | null
 
-  // Credit terms/details captured when the rep submitted the application, for
-  // the Stage 2 reviewer to check against the signed document before giving
-  // final approval. Shape isn't strictly typed on the frontend yet - render
-  // defensively.
-  credit_application?: Record<string, any> | null
+  // Credit terms/details captured when the rep submitted the application -
+  // directors, trade references, bank details, and requested credit terms -
+  // for approvers to review before making a Stage 1/Stage 2 decision. Backend
+  // field name is `pending_credit_application`, not `credit_application`.
+  pending_credit_application?: CreditApplicationInput | null
 }
 
 // A single director/business owner on the paper "Credit Appraisal Form".
@@ -184,7 +186,10 @@ export interface CreditApplicationInput {
 export function getCustomerDisplayName(
   customer: { name: string; business_name?: string | null; customer_type?: string | null },
 ): string {
-  if (customer.customer_type === "company" && customer.business_name?.trim()) {
+  // Business name is optional for individuals too (not just "company"
+  // customers) - show it whenever it's actually been captured, rather than
+  // gating on customer_type, so a filled-in field never silently disappears.
+  if (customer.business_name?.trim()) {
     return customer.business_name.trim()
   }
   return customer.name
@@ -203,20 +208,28 @@ export interface CustomerProfileData extends Omit<Customer, 'notes'> {
   avg_order_value?: number // Add this line for average order value
 }
 
-export async function getCustomers(): Promise<Customer[]> {
+export async function getCustomers(filters: { created_by?: string; include_pending?: boolean } = {}): Promise<Customer[]> {
   try {
     // Check if we're in a browser environment before making the API call
     if (typeof window === 'undefined') {
       return [];
     }
-    
+
     // Add a small delay to ensure auth is loaded (helps with race conditions)
     if (typeof window !== 'undefined' && !localStorage.getItem('token')) {
       await new Promise(resolve => setTimeout(resolve, 500));
     }
-    
+
+    const queryParams = new URLSearchParams();
+    if (filters.created_by) queryParams.append('created_by', filters.created_by);
+    // Safe to always request - the backend only actually includes pending
+    // applications for viewers who have can_approve_account; everyone else
+    // gets the same approved-only list as before.
+    if (filters.include_pending) queryParams.append('include_pending', '1');
+    const queryString = queryParams.toString() ? `?${queryParams.toString()}` : '';
+
     const response = await apiCall<any>(
-      "/customers",
+      `/customers${queryString}`,
       "GET",
       undefined,
       true, // <-- Restore to authenticated fetch
@@ -585,7 +598,17 @@ export async function getCustomerApprovals(customerId: string): Promise<Customer
 // uploaded yet. Both errors should be surfaced to the reviewer as-is.
 export async function submitCustomerApproval(
   customerId: string,
-  data: { status: "approved" | "rejected"; notes?: string },
+  data: {
+    status: "approved" | "rejected"
+    notes?: string
+    // Stage 1 approval only - overrides the credit terms the CustomerAccount
+    // gets created with, in place of what the rep originally submitted.
+    annual_turnover?: number
+    credit_required?: number
+    credit_period_required?: string
+    credit_period_pd_cheque_days?: number
+    credit_days?: number
+  },
 ): Promise<{ approval: CustomerApproval; customer: Customer }> {
   try {
     const response = await apiCall<{
@@ -637,5 +660,33 @@ export async function uploadSignedCreditApplication(
     }
   } catch (error: any) {
     throw new Error(error.message || "Failed to upload signed application.")
+  }
+}
+
+// Uploads the approver's own company-stamped copy of the credit application -
+// a separate record-keeping attachment from the rep's customer-signed scan
+// above. Available once the customer reaches "pending_stage2" or "approved";
+// unlike the signed-application upload, it never changes approval_status.
+export async function uploadStampedCreditApplication(
+  customerId: string,
+  file: File,
+): Promise<{ document: SignedApplicationDocument }> {
+  try {
+    const formData = new FormData()
+    formData.append("file", file)
+
+    const response = await apiCall<{
+      status: string
+      message?: string
+      document: SignedApplicationDocument
+    }>(`/customers/${customerId}/stamped-application`, "POST", formData, true)
+
+    if (response.status === "success" && response.document) {
+      return { document: response.document }
+    } else {
+      throw new Error(typeof response.message === "string" ? response.message : "Failed to upload stamped application.")
+    }
+  } catch (error: any) {
+    throw new Error(error.message || "Failed to upload stamped application.")
   }
 }

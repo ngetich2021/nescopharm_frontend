@@ -98,16 +98,20 @@ export function CreateDispatchFromRequisitionModal({
           to_user_id: requisition.requester_id, // Set requester as assigned user
           type: "internal",
           notes: `Dispatch for requisition ${requisition.requisition_number}`,
-          items: requisition.items.map(item => ({
-            product_id: item.product_id,
-            variant_id: item.variant_id || undefined,
-            quantity: item.quantity,
-            is_returnable: true,
-            return_date: format(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), "yyyy-MM-dd"),
-            notes: item.notes || "",
-            product: item.product,
-            variant: item.variant
-          }))
+          // Custom (non-catalog) items have no product/stock to dispatch from -
+          // they need to be sourced manually, so leave them out of this list.
+          items: requisition.items
+            .filter(item => item.product_id)
+            .map(item => ({
+              product_id: item.product_id as string,
+              variant_id: item.variant_id || undefined,
+              quantity: item.quantity,
+              is_returnable: true,
+              return_date: format(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), "yyyy-MM-dd"),
+              notes: item.notes || "",
+              product: item.product,
+              variant: item.variant
+            }))
         });
       }
     } else {
@@ -466,6 +470,12 @@ export function CreateDispatchFromRequisitionModal({
               <CardDescription>
                 Items from the requisition that will be dispatched
               </CardDescription>
+              {requisition && requisition.items.some(item => !item.product_id) && (
+                <p className="text-xs text-amber-600 mt-1">
+                  {requisition.items.filter(item => !item.product_id).length} custom (non-catalog) item(s) on this
+                  requisition aren't in stock and are excluded here - source them manually.
+                </p>
+              )}
             </CardHeader>
             <CardContent>
               {formData.items.length === 0 ? (

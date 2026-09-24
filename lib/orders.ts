@@ -64,6 +64,10 @@ export interface OrderDetail extends Order {
     unit_quantity?: number | null
     base_quantity?: number
     unit_price: string
+    // Which named product price tier (see PriceTierInput in lib/products.ts)
+    // was used for this line, or "Custom" for a hand-typed price - internal
+    // reference only, never shown on a customer-facing order document.
+    price_label?: string | null
     total_price: string
     packaging_breakdown?: {
       total_base_quantity: number
@@ -174,10 +178,11 @@ interface OrderDetailApiResponse {
  * @returns A promise that resolves to an array of Order objects.
  * @throws An error if the API call fails or returns an invalid format.
  */
-export async function fetchOrders(): Promise<Order[]> {
+export async function fetchOrders(filters: { mine?: boolean } = {}): Promise<Order[]> {
   try {
     // API will handle company filtering based on the authenticated user
-    const response = await apiCall<OrdersApiResponse>('/orders', "GET", undefined, true);
+    const query = filters.mine ? '?mine=1' : ''
+    const response = await apiCall<OrdersApiResponse>(`/orders${query}`, "GET", undefined, true);
 
     // Handle the paginated response structure
     if (response.status === "success" && response.orders && response.orders.data) {

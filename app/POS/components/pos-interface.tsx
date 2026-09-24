@@ -8,6 +8,7 @@ import { ProductSearch } from "./product-search"
 import { ShoppingCart } from "./shopping-cart"
 import { CustomerSelector } from "./customer-selector"
 import { PaymentModal } from "./payment-modal"
+import { MyActivityPanel } from "./my-activity-panel"
 import { useToast } from "@/hooks/use-toast"
 import { useRouter } from "next/navigation"
 
@@ -35,6 +36,11 @@ interface CartContextType {
   taxRate: number
   setTaxRate: React.Dispatch<React.SetStateAction<number>>
   clearCart: () => void
+  // Bumped whenever something My Activity cares about happens elsewhere in
+  // POS (a quote submitted, a customer created) - MyActivityPanel watches
+  // this to refresh immediately instead of only on mount.
+  activityVersion: number
+  bumpActivityVersion: () => void
 }
 
 const CartContext = createContext<CartContextType | undefined>(undefined)
@@ -50,14 +56,17 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
   const [taxEnabled, setTaxEnabled] = useState(false)
   const [taxRate, setTaxRate] = useState(8)
+  const [activityVersion, setActivityVersion] = useState(0)
 
   const clearCart = () => {
     setCartItems([])
     setSelectedCustomer(null)
   }
 
+  const bumpActivityVersion = () => setActivityVersion((v) => v + 1)
+
   return (
-    <CartContext.Provider value={{ cartItems, setCartItems, selectedCustomer, setSelectedCustomer, taxEnabled, setTaxEnabled, taxRate, setTaxRate, clearCart }}>
+    <CartContext.Provider value={{ cartItems, setCartItems, selectedCustomer, setSelectedCustomer, taxEnabled, setTaxEnabled, taxRate, setTaxRate, clearCart, activityVersion, bumpActivityVersion }}>
       {children}
     </CartContext.Provider>
   )
@@ -217,6 +226,10 @@ export function POSInterface() {
 
       {/* Cart and Customer - Takes up 1 column */}
       <div className="space-y-6">
+        {/* Shown first (when there's anything active) so a rep tracking a
+            pending approval/confirmation sees it before Customer/Cart. */}
+        <MyActivityPanel />
+
         <Card className="p-6">
           <CustomerSelector selectedCustomer={selectedCustomer} onCustomerSelect={setSelectedCustomer} />
         </Card>

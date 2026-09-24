@@ -7,8 +7,6 @@ import { ShoppingCartIcon as CartIcon, Plus, Minus, Trash2, Package, Edit, Check
 import type { CartItem } from "./pos-interface"
 import { Switch } from "@/components/ui/switch"
 import { useState } from "react"
-import { usePermissions } from "@/hooks/use-permissions"
-import { useToast } from "@/hooks/use-toast"
 
 interface ShoppingCartProps {
   items: CartItem[]
@@ -23,60 +21,32 @@ interface ShoppingCartProps {
   setTaxRate: (rate: number) => void
 }
 
+// Cart editing (add/remove/adjust quantity/price, clear, checkout) is just
+// local state until something is actually submitted - the real authorization
+// happens at that point: PaymentModal checks can_create_payment for a normal
+// order, and routes Sales Reps to the quote-submission flow instead (which
+// only needs can_create_quotes, not can_create_orders). Gating cart editing
+// itself on can_create_orders previously locked reps out of their own cart
+// entirely, including the "Proceed to Checkout" button.
 export function ShoppingCart({ items, onUpdateQuantity, onUpdatePrice, onRemoveItem, onCheckout, onClearCart, taxEnabled, setTaxEnabled, taxRate, setTaxRate }: ShoppingCartProps) {
   const [editingPriceId, setEditingPriceId] = useState<string | null>(null)
   const [tempPrice, setTempPrice] = useState<string>("")
-  const { hasPermission } = usePermissions()
-  const { toast } = useToast()
-  
-  // Check if user has permission to create orders
-  const canCreateOrders = hasPermission("can_create_orders")
 
   const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0)
   const tax = taxEnabled ? subtotal * (taxRate / 100) : 0
   const total = subtotal + tax
 
   const handleQuantityChange = (id: string, value: string) => {
-    // Check permission before allowing quantity changes
-    if (!canCreateOrders) {
-      toast({
-        title: "Access Denied",
-        description: "You don't have permission to modify cart items",
-        variant: "destructive"
-      })
-      return
-    }
-    
     const quantity = Number.parseInt(value) || 0
     onUpdateQuantity(id, quantity)
   }
 
   const handleEditPrice = (id: string, currentPrice: number) => {
-    // Check permission before allowing price editing
-    if (!canCreateOrders) {
-      toast({
-        title: "Access Denied",
-        description: "You don't have permission to modify item prices",
-        variant: "destructive"
-      })
-      return
-    }
-    
     setEditingPriceId(id)
     setTempPrice(currentPrice.toString())
   }
 
   const handleSavePrice = (id: string) => {
-    // Check permission before allowing price saving
-    if (!canCreateOrders) {
-      toast({
-        title: "Access Denied",
-        description: "You don't have permission to modify item prices",
-        variant: "destructive"
-      })
-      return
-    }
-    
     const price = parseFloat(tempPrice)
     if (!isNaN(price) && price >= 0) {
       onUpdatePrice(id, price)
@@ -91,44 +61,14 @@ export function ShoppingCart({ items, onUpdateQuantity, onUpdatePrice, onRemoveI
   }
 
   const handleRemoveItem = (id: string) => {
-    // Check permission before allowing item removal
-    if (!canCreateOrders) {
-      toast({
-        title: "Access Denied",
-        description: "You don't have permission to remove items from cart",
-        variant: "destructive"
-      })
-      return
-    }
-    
     onRemoveItem(id)
   }
 
   const handleClearCart = () => {
-    // Check permission before allowing cart clearing
-    if (!canCreateOrders) {
-      toast({
-        title: "Access Denied",
-        description: "You don't have permission to clear the cart",
-        variant: "destructive"
-      })
-      return
-    }
-    
     onClearCart()
   }
 
   const handleCheckout = () => {
-    // Check permission before allowing checkout
-    if (!canCreateOrders) {
-      toast({
-        title: "Access Denied",
-        description: "You don't have permission to create orders",
-        variant: "destructive"
-      })
-      return
-    }
-    
     onCheckout()
   }
 
@@ -140,7 +80,7 @@ export function ShoppingCart({ items, onUpdateQuantity, onUpdatePrice, onRemoveI
           Cart ({items.length})
         </h2>
         {items.length > 0 && (
-          <Button variant="outline" size="sm" onClick={handleClearCart} disabled={!canCreateOrders}>
+          <Button variant="outline" size="sm" onClick={handleClearCart}>
             Clear All
           </Button>
         )}
@@ -196,7 +136,6 @@ export function ShoppingCart({ items, onUpdateQuantity, onUpdatePrice, onRemoveI
                             handleCancelEdit()
                           }
                         }}
-                        disabled={!canCreateOrders}
                       />
                       <span className="text-xs text-gray-500">each</span>
                       <Button
@@ -204,7 +143,6 @@ export function ShoppingCart({ items, onUpdateQuantity, onUpdatePrice, onRemoveI
                         size="icon"
                         className="h-6 w-6"
                         onClick={() => handleSavePrice(item.id)}
-                        disabled={!canCreateOrders}
                       >
                         <Check className="h-3 w-3 text-green-600" />
                       </Button>
@@ -213,7 +151,6 @@ export function ShoppingCart({ items, onUpdateQuantity, onUpdatePrice, onRemoveI
                         size="icon"
                         className="h-6 w-6"
                         onClick={handleCancelEdit}
-                        disabled={!canCreateOrders}
                       >
                         <X className="h-3 w-3 text-red-600" />
                       </Button>
@@ -230,7 +167,6 @@ export function ShoppingCart({ items, onUpdateQuantity, onUpdatePrice, onRemoveI
                         className="h-5 w-5 hover:bg-gray-100"
                         onClick={() => handleEditPrice(item.id, item.price)}
                         title="Edit price"
-                        disabled={!canCreateOrders}
                       >
                         <Edit className="h-3 w-3 text-gray-400" />
                       </Button>
@@ -242,7 +178,7 @@ export function ShoppingCart({ items, onUpdateQuantity, onUpdatePrice, onRemoveI
                       size="icon"
                       className="h-8 w-8"
                       onClick={() => handleQuantityChange(item.id, (item.quantity - 1).toString())}
-                      disabled={item.quantity <= 1 || !canCreateOrders}
+                      disabled={item.quantity <= 1}
                       aria-label="Decrease quantity"
                     >
                       <Minus className="h-4 w-4" />
@@ -254,14 +190,12 @@ export function ShoppingCart({ items, onUpdateQuantity, onUpdatePrice, onRemoveI
                       className="w-14 text-center h-8"
                       min="1"
                       max={item.stock}
-                      disabled={!canCreateOrders}
                     />
                     <Button
                       variant="outline"
                       size="icon"
                       className="h-8 w-8"
                       onClick={() => handleQuantityChange(item.id, (item.quantity + 1).toString())}
-                      disabled={!canCreateOrders}
                       aria-label="Increase quantity"
                     >
                       <Plus className="h-4 w-4" />
@@ -275,7 +209,6 @@ export function ShoppingCart({ items, onUpdateQuantity, onUpdatePrice, onRemoveI
                     className="rounded-full bg-gray-100 hover:bg-red-100 transition-colors"
                     onClick={() => handleRemoveItem(item.id)}
                     aria-label="Remove from cart"
-                    disabled={!canCreateOrders}
                   >
                     <Trash2 className="h-5 w-5 text-gray-400 group-hover:text-red-500 transition-colors" />
                   </Button>
@@ -289,14 +222,13 @@ export function ShoppingCart({ items, onUpdateQuantity, onUpdatePrice, onRemoveI
           <div className="bg-gray-50 rounded-xl shadow-inner p-4 mt-4 space-y-2">
             {/* Tax Toggle and Dropdown */}
             <div className="flex items-center gap-3 mb-2">
-              <Switch id="tax-toggle" checked={taxEnabled} onCheckedChange={canCreateOrders ? setTaxEnabled : undefined} disabled={!canCreateOrders} />
+              <Switch id="tax-toggle" checked={taxEnabled} onCheckedChange={setTaxEnabled} />
               <label htmlFor="tax-toggle" className="text-sm font-medium select-none">Apply Tax</label>
               {taxEnabled && (
                 <select
                   className="ml-2 border rounded px-2 py-1 text-sm"
                   value={taxRate}
-                  onChange={canCreateOrders ? (e => setTaxRate(Number(e.target.value))) : undefined}
-                  disabled={!canCreateOrders}
+                  onChange={(e) => setTaxRate(Number(e.target.value))}
                 >
                   <option value={0}>0%</option>
                   <option value={8}>8%</option>
@@ -319,7 +251,7 @@ export function ShoppingCart({ items, onUpdateQuantity, onUpdatePrice, onRemoveI
               <span>Total:</span>
               <span>Ksh {total.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
             </div>
-            <Button onClick={handleCheckout} className="w-full mt-4" size="lg" disabled={!canCreateOrders || items.length === 0}>
+            <Button onClick={handleCheckout} className="w-full mt-4" size="lg" disabled={items.length === 0}>
               Proceed to Checkout
             </Button>
           </div>

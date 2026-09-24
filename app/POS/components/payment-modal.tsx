@@ -10,12 +10,13 @@ import { CreditCard, Banknote, Smartphone, Receipt } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { ReceiptPrinter } from "./receipt-printer"
 import type { CartItem } from "./pos-interface"
+import { useCart } from "./pos-interface"
 import type { Customer } from "@/lib/customers"
 import { createPayment } from "@/lib/payments"
 import apiCall from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
 import { createDebt, updateDebtByOrderId, getDebtForOrder } from "@/lib/debts"
-import { getCustomers, createCustomer } from "@/lib/customers"
+import { getCustomers, createCustomer, getCustomerDisplayName } from "@/lib/customers"
 import { createQuote } from "@/lib/quotes"
 import { usePermissions } from "@/hooks/use-permissions"
 
@@ -64,6 +65,7 @@ export function PaymentModal({ isOpen, onClose, cartItems, customer, onPaymentCo
   const [expectedPaymentDate, setExpectedPaymentDate] = useState<string>("")
   const router = useRouter()
   const { companyId, user } = useAuth();
+  const { bumpActivityVersion } = useCart()
   // Sales Reps don't take payment or create orders in POS - their "sale" is
   // captured as a Quote and routed to whoever can create quotes for review,
   // rather than pushing them through the full order/payment/debt machinery.
@@ -80,9 +82,14 @@ export function PaymentModal({ isOpen, onClose, cartItems, customer, onPaymentCo
   // Check if user has permission to create payments
   const canCreatePayment = hasPermission("can_create_payment")
 
-  // If user doesn't have permission to create payments, show a message and close the modal
+  // If user doesn't have permission to create payments, show a message and close the modal.
+  // Doesn't apply to a Sales Rep's own submission - they never touch payment
+  // at all, they submit a Quote (a completely separate permission,
+  // can_create_quotes, checked server-side). Gating on can_create_payment
+  // here was closing the modal on them before they could even see the
+  // "Submit as Quote" button.
   useEffect(() => {
-    if (isOpen && !canCreatePayment) {
+    if (isOpen && !isRepSubmission && !canCreatePayment) {
       toast({
         title: "Access Denied",
         description: "You don't have permission to create payments",
@@ -90,7 +97,7 @@ export function PaymentModal({ isOpen, onClose, cartItems, customer, onPaymentCo
       })
       onClose()
     }
-  }, [isOpen, canCreatePayment, onClose, toast])
+  }, [isOpen, isRepSubmission, canCreatePayment, onClose, toast])
 
   useEffect(() => {
     if (paymentMethod === "debt") {
@@ -202,13 +209,18 @@ export function PaymentModal({ isOpen, onClose, cartItems, customer, onPaymentCo
         if (item.variantId) quoteItem.variant_id = item.variantId
         return quoteItem
       })
+      const validUntil = new Date()
+      validUntil.setDate(validUntil.getDate() + 14)
       const quote = await createQuote({
         customer_id: customer.id,
         items,
         currency: "KES",
         notes: "Submitted from POS by sales rep - pending review.",
+        status: "pending",
+        valid_until: validUntil.toISOString().slice(0, 10),
       })
       setQuoteSubmitted({ quote_number: quote.quote_number })
+      bumpActivityVersion()
       toast({
         title: "Quote submitted for review",
         description: `Quote ${quote.quote_number} sent for review. It becomes a full order once reviewed and edited.`,
@@ -539,8 +551,9 @@ export function PaymentModal({ isOpen, onClose, cartItems, customer, onPaymentCo
     );
   }
 
-  // If user doesn't have permission to create payments, don't render the modal
-  if (!canCreatePayment) {
+  // If user doesn't have permission to create payments, don't render the
+  // modal - except for a rep's own submission, which never needs it (see effect above).
+  if (!isRepSubmission && !canCreatePayment) {
     return null;
   }
 
@@ -598,13 +611,44 @@ export function PaymentModal({ isOpen, onClose, cartItems, customer, onPaymentCo
         </div>
 
         {/* Sales Reps don't take payment in POS - their sale becomes a Quote
-            for someone authorized to create quotes to review and finalize. */}
+            for someone authorized to create quotes to review and finalize.
+            Since there's no going back to fix a typo'd item once submitted,
+            show everything in full (customer's real name, full product/
+            variant names, no truncation) as a proper "review before you
+            submit" step rather than just a subtotal. */}
         {isRepSubmission && (
-          <div className="px-8 pb-2">
+          <div className="px-8 pb-2 space-y-3">
             <div className="rounded-lg bg-blue-50 border border-blue-200 p-4 text-sm text-blue-800">
               As a Sales Rep, this won't be completed as an order here. It will be submitted as a
               quote for review by someone authorized to create quotes - it becomes a full order once
               they've reviewed and edited it.
+            </div>
+
+            <div className="rounded-lg border p-4">
+              <div className="text-xs font-medium text-gray-500 mb-1">Customer</div>
+              <div className="text-sm font-semibold text-gray-900 mb-3">
+                {customer && customer.id !== "walk-in" ? getCustomerDisplayName(customer) : "No customer selected"}
+              </div>
+
+              <div className="text-xs font-medium text-gray-500 mb-2">Items ({cartItems.length})</div>
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                {cartItems.map((item) => (
+                  <div key={item.id} className="flex items-start justify-between text-sm gap-3">
+                    <div className="min-w-0">
+                      <div className="font-medium text-gray-900 break-words">
+                        {item.name}
+                        {item.variant && <span className="text-gray-500"> — {item.variant}</span>}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        SKU: {item.sku || "—"} · Qty {item.quantity} × Ksh {item.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                    <div className="text-sm font-semibold text-gray-900 whitespace-nowrap">
+                      Ksh {(item.price * item.quantity).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}

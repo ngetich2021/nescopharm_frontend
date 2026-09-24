@@ -105,6 +105,11 @@ export interface CreateSupplierPaymentPayload {
     payment_method: string;
     transaction_reference?: string;
     notes?: string;
+    // Required when payment_method is "cheque" - the cheque stays pending
+    // (not reducing the PO balance) until it's approved/cleared.
+    cheque_number?: string;
+    bank_name?: string;
+    maturity_date?: string;
 }
 
 export interface SupplierPaymentSummary {

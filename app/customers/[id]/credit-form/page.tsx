@@ -4,12 +4,19 @@ import { useState, useEffect, use, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { getCustomerProfile, CustomerProfileData } from "@/lib/customers"
-import { getCustomerAccount, CustomerAccountWithDetails } from "@/lib/customer-accounts"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { getCustomerProfile, uploadSignedCreditApplication, CustomerProfileData } from "@/lib/customers"
+import { getCustomerAccount, updateCustomerAccount, CustomerAccountWithDetails } from "@/lib/customer-accounts"
 import { getCompany, Company } from "@/lib/company"
-import { ArrowLeft, Download, Printer } from "lucide-react"
+import { ArrowLeft, Download, Printer, Save, Upload } from "lucide-react"
 import { Loader2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { useAuth } from "@/lib/auth-context"
+import { usePermissions } from "@/hooks/use-permissions"
+import { compressImageIfLarge } from "@/lib/image-compression"
 
 // The customer profile response includes several Credit Appraisal Form fields
 // that aren't yet part of the shared `CustomerProfileData` type (confirmed live
@@ -45,10 +52,60 @@ type CustomerAccountWithCreditFields = Omit<CustomerAccountWithDetails, "bank_de
 // exists at all yet) — the document must not be shown for these.
 const GATED_STATUSES = new Set(["pending_stage1", "draft", "", null, undefined])
 
+function formatMoney(amount: string | number | undefined | null): string {
+  if (amount === undefined || amount === null || amount === '') return '—'
+  const num = typeof amount === 'string' ? parseFloat(amount) : amount
+  if (isNaN(num)) return '—'
+  return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function field(value: string | number | null | undefined) {
+  return value === null || value === undefined || value === '' ? '—' : value
+}
+
+// Reference document (see the credit appraisal PDF) renders every field's
+// static label in navy blue, with the actual captured data (what was filled
+// in) standing out in black bold text on the underline - matches the paper
+// form's convention of pre-printed labels vs. handwritten answers.
+const NAVY = "#2B3990"
+const VALUE_COLOR = "#000000"
+
+// The editable Section 8 fields need to look like part of the same paper-form
+// document as everything else on this page (underlined navy line, no boxy
+// input chrome) instead of a generic bordered web-form input - shadcn's
+// default Input/Textarea styling (rounded box, grey border, focus ring) reads
+// as "not the form" next to the rest of the underline-styled document.
+const DOC_INPUT_CLASS =
+  "rounded-none border-0 border-b-2 bg-transparent px-1 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 font-bold"
+const DOC_TEXTAREA_CLASS =
+  "rounded-sm bg-transparent px-2 py-1.5 shadow-none focus-visible:ring-1 focus-visible:ring-offset-0 font-bold"
+
+// Must live at module scope, not inside the page component - defining a
+// component inside another component's render body creates a brand-new
+// component type on every render, which breaks React's fiber identity
+// tracking (this was the cause of the "Expected static flag was missing"
+// internal React error).
+function FormLine({ label, value, wide }: { label: string; value: string | number | null | undefined; wide?: boolean }) {
+  return (
+    <div className="text-sm leading-relaxed">
+      <span className="font-bold" style={{ color: NAVY }}>{label} : </span>
+      <span
+        className={`inline-block border-b px-1 font-bold ${wide ? "min-w-[70%]" : "min-w-[160px]"}`}
+        style={{ color: VALUE_COLOR, borderColor: NAVY }}
+      >
+        {field(value)}
+      </span>
+    </div>
+  )
+}
+
 export default function CreditAppraisalFormPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
   const { toast } = useToast()
+  const { user } = useAuth()
+  const { hasPermission } = usePermissions()
+  const canEditOfficialUse = hasPermission("can_approve_account") || hasPermission("can_update_accounts")
   const formRef = useRef<HTMLDivElement>(null)
   const [customer, setCustomer] = useState<CustomerProfileWithCreditFields | null>(null)
   const [account, setAccount] = useState<CustomerAccountWithCreditFields | null>(null)
@@ -56,43 +113,126 @@ export default function CreditAppraisalFormPage({ params }: { params: Promise<{ 
   const [isLoading, setIsLoading] = useState(true)
   const [isDownloading, setIsDownloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [letterheadFailed, setLetterheadFailed] = useState(false)
+
+  // Section 8 "For Official Use Only" - the GM's actual digital sign-off,
+  // replacing the paper form's blank lines for a pen signature. Saved onto
+  // the CustomerAccount that Stage 1 approval already created.
+  const [approvedCreditLimit, setApprovedCreditLimit] = useState("")
+  const [approvedCreditDays, setApprovedCreditDays] = useState("")
+  const [officialRemarks, setOfficialRemarks] = useState("")
+  const [reviewedByName, setReviewedByName] = useState("")
+  const [reviewedByPosition, setReviewedByPosition] = useState("")
+  const [isSavingOfficialUse, setIsSavingOfficialUse] = useState(false)
+
+  // Declaration (Section 7) - which director is signing. Prefilled from the
+  // directors captured on the account; a dropdown only makes sense to show
+  // when there's an actual choice to make.
+  const [selectedDirectorId, setSelectedDirectorId] = useState<string>("")
+
+  // Upload the physically signed/stamped scan - only meaningful while
+  // awaiting it (approval_status === "pending_documents"). The rep who
+  // submitted this customer is the one who'd typically have the signed copy
+  // in hand, so this needs to work for them too, not just for approvers.
+  const [selectedSignedFile, setSelectedSignedFile] = useState<File | null>(null)
+  const [isUploadingSigned, setIsUploadingSigned] = useState(false)
 
   useEffect(() => {
-    const getData = async () => {
-      try {
-        const fetchedCustomer = (await getCustomerProfile(id)) as CustomerProfileWithCreditFields | null
-        if (!fetchedCustomer) {
-          setError("Customer not found")
-          return
-        }
-        setCustomer(fetchedCustomer)
-
-        if (fetchedCustomer.company_id) {
-          try {
-            const companyData = await getCompany(fetchedCustomer.company_id)
-            setCompany(companyData)
-          } catch (err) {
-            console.error('Failed to fetch company:', err)
-          }
-        }
-
-        if (fetchedCustomer.account_id) {
-          try {
-            const accountData = await getCustomerAccount(fetchedCustomer.account_id)
-            setAccount(accountData as CustomerAccountWithCreditFields | null)
-          } catch (err) {
-            console.error('Failed to fetch customer account:', err)
-          }
-        }
-      } catch (err: any) {
-        setError(err.message || "Failed to load customer")
-      } finally {
-        setIsLoading(false)
-      }
+    setApprovedCreditLimit(account?.credit_required != null ? String(account.credit_required) : "")
+    setApprovedCreditDays(account?.credit_days != null ? String(account.credit_days) : "")
+    setOfficialRemarks(account?.notes || "")
+    // Once a review has actually been saved, always show that recorded
+    // name/position, regardless of who's viewing. Before that, ONLY
+    // convenience-default to the current session user if they're actually
+    // the one who can approve/edit this - a sales rep (or anyone else
+    // without approval rights) must never see their own name here just
+    // because they happened to open the page before a GM/Director reviewed it.
+    if (account?.reviewed_by_name) {
+      setReviewedByName(account.reviewed_by_name)
+    } else if (canEditOfficialUse && user) {
+      setReviewedByName(`${user.first_name || ""} ${user.last_name || ""}`.trim())
+    } else {
+      setReviewedByName("")
     }
+    if (account?.reviewed_by_position) {
+      setReviewedByPosition(account.reviewed_by_position)
+    } else if (canEditOfficialUse && user?.role?.name) {
+      setReviewedByPosition(user.role.name)
+    } else {
+      setReviewedByPosition("")
+    }
+  }, [account?.credit_required, account?.credit_days, account?.notes, account?.reviewed_by_name, account?.reviewed_by_position, user, canEditOfficialUse])
 
+  useEffect(() => {
+    if (account?.directors && account.directors.length > 0 && !selectedDirectorId) {
+      setSelectedDirectorId(account.directors[0].id)
+    }
+  }, [account?.directors, selectedDirectorId])
+
+  const getData = async () => {
+    try {
+      const fetchedCustomer = (await getCustomerProfile(id)) as CustomerProfileWithCreditFields | null
+      if (!fetchedCustomer) {
+        setError("Customer not found")
+        return
+      }
+      setCustomer(fetchedCustomer)
+
+      if (fetchedCustomer.company_id) {
+        try {
+          const companyData = await getCompany(fetchedCustomer.company_id)
+          setCompany(companyData)
+        } catch (err) {
+          console.error('Failed to fetch company:', err)
+        }
+      }
+
+      if (fetchedCustomer.account_id) {
+        try {
+          const accountData = await getCustomerAccount(fetchedCustomer.account_id)
+          setAccount(accountData as CustomerAccountWithCreditFields | null)
+        } catch (err) {
+          console.error('Failed to fetch customer account:', err)
+        }
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to load customer")
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => {
     getData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
+
+  const handleUploadSigned = async () => {
+    if (!selectedSignedFile) return
+    setIsUploadingSigned(true)
+    try {
+      // A phone photo of the signed form is usually the culprit for "too
+      // large" - shrink it automatically instead of making the rep find a
+      // way to resize it themselves. PDFs/already-small files pass through.
+      const fileToUpload = await compressImageIfLarge(selectedSignedFile)
+      if (fileToUpload.size > 15 * 1024 * 1024) {
+        toast({
+          title: "File too large",
+          description: "The signed application must be 15MB or smaller, even after compression.",
+          variant: "destructive",
+        })
+        return
+      }
+      await uploadSignedCreditApplication(id, fileToUpload)
+      toast({ title: "Uploaded", description: "Signed credit application uploaded. Moved to final review." })
+      setSelectedSignedFile(null)
+      await getData()
+    } catch (err: any) {
+      toast({ title: "Upload failed", description: err.message || "Failed to upload the signed application.", variant: "destructive" })
+    } finally {
+      setIsUploadingSigned(false)
+    }
+  }
 
   const handlePrint = () => {
     window.print()
@@ -125,15 +265,28 @@ export default function CreditAppraisalFormPage({ params }: { params: Promise<{ 
         format: 'a4',
       })
 
+      // This document is longer than a single A4 page (8 sections + tables),
+      // so it must be sliced across as many pages as it actually needs at
+      // full page width - scaling the whole thing down to fit one page (the
+      // previous behavior) is what made everything render unreadably tiny.
       const pdfWidth = pdf.internal.pageSize.getWidth()
       const pdfHeight = pdf.internal.pageSize.getHeight()
-      const imgWidth = canvas.width
-      const imgHeight = canvas.height
-      const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight)
-      const imgX = (pdfWidth - imgWidth * ratio) / 2
-      const imgY = 10
+      const imgWidth = pdfWidth
+      const imgHeight = (canvas.height * imgWidth) / canvas.width
 
-      pdf.addImage(imgData, 'PNG', imgX, imgY, imgWidth * ratio, imgHeight * ratio)
+      let heightLeft = imgHeight
+      let position = 0
+
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
+      heightLeft -= pdfHeight
+
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight
+        pdf.addPage()
+        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
+        heightLeft -= pdfHeight
+      }
+
       const nameForFile = customer.business_name || customer.name || 'Customer'
       pdf.save(`Credit-Appraisal-Form-${nameForFile}.pdf`)
 
@@ -150,6 +303,30 @@ export default function CreditAppraisalFormPage({ params }: { params: Promise<{ 
       })
     } finally {
       setIsDownloading(false)
+    }
+  }
+
+  const handleSaveOfficialUse = async () => {
+    if (!account) return
+    setIsSavingOfficialUse(true)
+    try {
+      const updated = await updateCustomerAccount(account.id, {
+        credit_required: approvedCreditLimit.trim() ? (approvedCreditLimit as any) : null,
+        credit_days: approvedCreditDays.trim() ? (Number(approvedCreditDays) as any) : null,
+        notes: officialRemarks.trim() || null,
+        reviewed_by_name: reviewedByName.trim() || null,
+        reviewed_by_position: reviewedByPosition.trim() || null,
+      })
+      setAccount((prev) => (prev ? { ...prev, ...updated } : prev))
+      toast({ title: "Saved", description: "Official use details have been saved." })
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to save official use details.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSavingOfficialUse(false)
     }
   }
 
@@ -202,16 +379,6 @@ export default function CreditAppraisalFormPage({ params }: { params: Promise<{ 
 
   const displayName = customer.business_name || customer.name
 
-  const formatMoney = (amount: string | number | undefined | null): string => {
-    if (amount === undefined || amount === null || amount === '') return '—'
-    const num = typeof amount === 'string' ? parseFloat(amount) : amount
-    if (isNaN(num)) return '—'
-    return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  }
-
-  const field = (value: string | number | null | undefined) =>
-    value === null || value === undefined || value === '' ? '—' : value
-
   return (
     <div className="min-h-screen bg-gray-50 print:min-h-0 print:bg-white">
       {/* Action Bar - Hide on print */}
@@ -245,6 +412,54 @@ export default function CreditAppraisalFormPage({ params }: { params: Promise<{ 
         </div>
       </div>
 
+      {/* Upload Signed Application - only while awaiting the physically
+          signed/stamped scan. Shown prominently above the document itself so
+          it isn't missed (this is the whole reason a rep would be on this
+          page: print/show this form to the customer, get it signed, then
+          upload it back here to move the application to final review). */}
+      {customer.approval_status === "pending_documents" && (
+        <div className="print:hidden">
+          <div className="container mx-auto px-4 pt-6">
+            <Card className="max-w-4xl mx-auto p-6 space-y-3 border-2 border-primary/30">
+              <div className="flex items-center gap-2 font-medium text-sm">
+                <Upload className="h-4 w-4" />
+                Upload Signed Application
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Print or download the form above, have the customer sign and stamp it, then upload a scan or
+                photo here to move this application to final review. Large photos are compressed automatically.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Input
+                  type="file"
+                  onChange={(e) => setSelectedSignedFile(e.target.files?.[0] || null)}
+                  disabled={isUploadingSigned}
+                  className="sm:max-w-sm"
+                />
+                <Button onClick={handleUploadSigned} disabled={!selectedSignedFile || isUploadingSigned}>
+                  {isUploadingSigned ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Uploading...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="h-4 w-4 mr-2" />
+                      Upload
+                    </>
+                  )}
+                </Button>
+              </div>
+              {selectedSignedFile && (
+                <p className="text-xs text-muted-foreground">
+                  Selected: {selectedSignedFile.name} ({(selectedSignedFile.size / 1024).toFixed(0)} KB)
+                </p>
+              )}
+            </Card>
+          </div>
+        </div>
+      )}
+
       {/* Credit Appraisal Form Document */}
       <div className="container mx-auto px-4 py-8 print:p-0 print:m-0 print:max-w-none">
         <Card
@@ -252,212 +467,374 @@ export default function CreditAppraisalFormPage({ params }: { params: Promise<{ 
           className="max-w-4xl mx-auto bg-white p-8 md:p-12 shadow-lg print:shadow-none print:max-w-none print:m-0 print:p-8 print:border-0"
         >
           {/* Letterhead Banner - the sole source of company identity/contact info on this document */}
-          {company?.letterhead_url && (
+          {company?.letterhead_url && !letterheadFailed ? (
             <img
               src={company.letterhead_url}
               alt={`${company?.name || 'Company'} letterhead`}
               className="w-full h-auto mb-8"
               crossOrigin="anonymous"
+              onError={() => setLetterheadFailed(true)}
             />
-          )}
+          ) : company?.name ? (
+            // Fallback if the letterhead image can't load, so the document
+            // never renders with blank space where the company identity
+            // should be.
+            <div className="mb-8 pb-4 border-b-2 text-center" style={{ borderColor: NAVY }}>
+              <p className="text-xl font-bold" style={{ color: NAVY }}>{company.name}</p>
+            </div>
+          ) : null}
 
           {/* Title */}
-          <div className="mb-8 text-center">
-            <h1 className="text-2xl font-bold text-gray-900">CREDIT APPRAISAL FORM</h1>
-            <p className="text-sm text-gray-600 mt-1">{displayName}</p>
+          <div className="mb-6 text-center">
+            <h1 className="text-2xl font-bold" style={{ color: NAVY }}>CREDIT APPRAISAL FORM</h1>
+            <p className="text-sm mt-1" style={{ color: NAVY }}>{displayName}</p>
           </div>
 
-          {/* Company Details */}
-          <section className="mb-8">
-            <h2 className="text-sm font-bold text-gray-800 border-b-2 border-gray-300 pb-2 mb-3">COMPANY DETAILS</h2>
-            <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
-              <div><span className="text-gray-600">Business Name:</span> <span className="text-gray-900 font-medium">{field(customer.business_name)}</span></div>
-              <div><span className="text-gray-600">Trading Name:</span> <span className="text-gray-900 font-medium">{field(customer.trading_name)}</span></div>
-              <div><span className="text-gray-600">Business Type:</span> <span className="text-gray-900 font-medium">{field(customer.business_type)}</span></div>
-              <div><span className="text-gray-600">Registration Number:</span> <span className="text-gray-900 font-medium">{field(customer.registration_number)}</span></div>
-              <div><span className="text-gray-600">PPB License Number:</span> <span className="text-gray-900 font-medium">{field(customer.ppb_license_number)}</span></div>
-              <div><span className="text-gray-600">Website:</span> <span className="text-gray-900 font-medium">{field(customer.website)}</span></div>
-              <div><span className="text-gray-600">Telephone:</span> <span className="text-gray-900 font-medium">{field(customer.telephone)}</span></div>
-              <div><span className="text-gray-600">Country:</span> <span className="text-gray-900 font-medium">{field(customer.country)}</span></div>
-              <div><span className="text-gray-600">Region:</span> <span className="text-gray-900 font-medium">{field(customer.region)}</span></div>
-              <div><span className="text-gray-600">County:</span> <span className="text-gray-900 font-medium">{field(customer.county)}</span></div>
-              <div><span className="text-gray-600">City:</span> <span className="text-gray-900 font-medium">{field(customer.city)}</span></div>
-              <div className="col-span-2"><span className="text-gray-600">Address:</span> <span className="text-gray-900 font-medium">{field(customer.address)}</span></div>
+          {/* 1. Company Details */}
+          <section className="mb-4">
+            <h2 className="text-sm font-bold mb-3" style={{ color: NAVY }}>1. COMPANY DETAILS</h2>
+            <div className="space-y-1">
+              <FormLine label="Registered Business Name" value={customer.business_name} wide />
+              <FormLine label="Trading Name (if different)" value={customer.trading_name} wide />
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm py-1">
+                <span className="font-bold" style={{ color: NAVY }}>Type of Business:</span>
+                {(["Pharmacy", "Hospital/Clinic", "Distributor", "NGO", "Other"] as const).map((label) => {
+                  const key = label.toLowerCase().replace("/", "_")
+                  const stored = (customer.business_type || "").toLowerCase().replace(/\s+/g, "_")
+                  const isChecked = stored === key || (label === "Other" && !!customer.business_type && !["pharmacy", "hospital_clinic", "hospital/clinic", "distributor", "ngo"].includes(stored))
+                  return (
+                    <span key={label} style={{ color: NAVY }}>
+                      <span className="inline-block w-3.5 h-3.5 border align-middle mr-1 text-center leading-none text-[10px]" style={{ borderColor: NAVY }}>{isChecked ? "✓" : ""}</span>
+                      {label}{label === "Other" && isChecked && customer.business_type ? ` (${customer.business_type})` : ""}
+                    </span>
+                  )
+                })}
+              </div>
+              <FormLine label="Registration/License Number" value={customer.registration_number} wide />
+              <FormLine label="PPB License No." value={customer.ppb_license_number} wide />
+              <FormLine label="KRA PIN" value={customer.pin_number} />
+              <FormLine label="Postal Address" value={customer.postal_code} />
+              <FormLine label="Physical Address" value={customer.address} wide />
+              <FormLine label="Town/County" value={[customer.city, customer.county].filter(Boolean).join(", ") || null} wide />
+              <FormLine label="Region" value={customer.region} />
+              <FormLine label="Country" value={customer.country} />
+              <FormLine label="Telephone" value={customer.telephone} />
+              <FormLine label="Mobile" value={customer.phone} />
+              <FormLine label="Email" value={customer.email} wide />
+              <FormLine label="Website (if any)" value={customer.website} wide />
+            </div>
+            <p className="text-xs font-bold mt-4" style={{ color: NAVY }}>
+              ATTACH A COPY OF COI, KRA, PPB PREMISES, PPB PHARMACY LICENSE
+            </p>
+          </section>
+          <hr className="mb-4" style={{ borderTopWidth: 2, borderColor: NAVY }} />
+
+          {/* 2. Contact Persons */}
+          <section className="mb-4">
+            <h2 className="text-sm font-bold mb-3" style={{ color: NAVY }}>2. CONTACT PERSONS</h2>
+            <div className="space-y-1">
+              <p className="text-sm font-bold mb-1" style={{ color: NAVY }}>Primary Contact (Procurement Officer/Pharmacist-in-Charge)</p>
+              <FormLine label="Name" value={customer.contact_person_name} wide />
+              <FormLine label="Designation" value={customer.contact_person_designation} />
+              <FormLine label="Phone" value={customer.contact_person_phone} />
+              <FormLine label="Email" value={customer.contact_person_email} wide />
+              <p className="text-sm font-bold mb-1 mt-3" style={{ color: NAVY }}>Accounts Contact</p>
+              <FormLine label="Name" value={customer.accounts_contact_name} wide />
+              <FormLine label="Designation" value={customer.accounts_contact_designation} />
+              <FormLine label="Phone" value={customer.accounts_contact_phone} />
+              <FormLine label="Email" value={customer.accounts_contact_email} wide />
             </div>
           </section>
+          <hr className="mb-4" style={{ borderTopWidth: 2, borderColor: NAVY }} />
 
-          {/* Contact Persons */}
-          <section className="mb-8">
-            <h2 className="text-sm font-bold text-gray-800 border-b-2 border-gray-300 pb-2 mb-3">CONTACT PERSONS</h2>
-            <div className="grid grid-cols-2 gap-x-8 gap-y-4 text-sm">
-              <div>
-                <p className="font-semibold text-gray-700 mb-1">Primary Contact</p>
-                <p><span className="text-gray-600">Name:</span> {field(customer.contact_person_name)}</p>
-                <p><span className="text-gray-600">Phone:</span> {field(customer.contact_person_phone)}</p>
-                <p><span className="text-gray-600">Email:</span> {field(customer.contact_person_email)}</p>
-              </div>
-              <div>
-                <p className="font-semibold text-gray-700 mb-1">Accounts Contact</p>
-                <p><span className="text-gray-600">Name:</span> {field(customer.accounts_contact_name)}</p>
-                <p><span className="text-gray-600">Designation:</span> {field(customer.accounts_contact_designation)}</p>
-                <p><span className="text-gray-600">Phone:</span> {field(customer.accounts_contact_phone)}</p>
-                <p><span className="text-gray-600">Email:</span> {field(customer.accounts_contact_email)}</p>
-              </div>
-            </div>
-          </section>
-
-          {/* Directors / Business Owners */}
-          <section className="mb-8">
-            <h2 className="text-sm font-bold text-gray-800 border-b-2 border-gray-300 pb-2 mb-3">DIRECTORS / BUSINESS OWNERS</h2>
-            <table className="w-full text-sm">
+          {/* 3. Business Owners/Directors */}
+          <section className="mb-4">
+            <h2 className="text-sm font-bold mb-1" style={{ color: NAVY }}>3. BUSINESS OWNERS/DIRECTORS</h2>
+            <p className="text-xs mb-2" style={{ color: NAVY }}>Full Name, ID/Passport No, Phone Number, Pin No</p>
+            <table className="w-full text-sm border" style={{ borderColor: NAVY, color: NAVY }}>
               <thead>
-                <tr className="border-b border-gray-300">
-                  <th className="text-left py-2 font-semibold text-gray-700">Name</th>
-                  <th className="text-left py-2 font-semibold text-gray-700">ID/Passport No.</th>
-                  <th className="text-left py-2 font-semibold text-gray-700">PIN</th>
-                  <th className="text-left py-2 font-semibold text-gray-700">Phone Number</th>
+                <tr className="border-b" style={{ borderColor: NAVY }}>
+                  <th className="text-left py-1.5 px-2 font-bold border-r w-10" style={{ borderColor: NAVY }}>#</th>
+                  <th className="text-left py-1.5 px-2 font-bold border-r" style={{ borderColor: NAVY }}>Full Name</th>
+                  <th className="text-left py-1.5 px-2 font-bold border-r" style={{ borderColor: NAVY }}>ID/Passport No.</th>
+                  <th className="text-left py-1.5 px-2 font-bold border-r" style={{ borderColor: NAVY }}>Phone Number</th>
+                  <th className="text-left py-1.5 px-2 font-bold">Pin No.</th>
                 </tr>
               </thead>
               <tbody>
                 {account?.directors && account.directors.length > 0 ? (
-                  account.directors.map((director) => (
-                    <tr key={director.id} className="border-b border-gray-200">
-                      <td className="py-2 text-gray-900">{field(director.name)}</td>
-                      <td className="py-2 text-gray-900">{field(director.id_passport_number)}</td>
-                      <td className="py-2 text-gray-900">{field(director.pin)}</td>
-                      <td className="py-2 text-gray-900">{field(director.phone_number)}</td>
+                  account.directors.map((director, i) => (
+                    <tr key={director.id} className="border-b" style={{ borderColor: NAVY }}>
+                      <td className="py-1.5 px-2 border-r font-bold" style={{ borderColor: NAVY, color: VALUE_COLOR }}>{i + 1}.</td>
+                      <td className="py-1.5 px-2 border-r font-bold" style={{ borderColor: NAVY, color: VALUE_COLOR }}>{field(director.name)}</td>
+                      <td className="py-1.5 px-2 border-r font-bold" style={{ borderColor: NAVY, color: VALUE_COLOR }}>{field(director.id_passport_number)}</td>
+                      <td className="py-1.5 px-2 border-r font-bold" style={{ borderColor: NAVY, color: VALUE_COLOR }}>{field(director.phone_number)}</td>
+                      <td className="py-1.5 px-2 font-bold" style={{ color: VALUE_COLOR }}>{field(director.pin)}</td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={4} className="py-3 text-gray-500 text-center">No directors on record</td>
+                    <td colSpan={5} className="py-3 text-center opacity-70">No directors on record</td>
                   </tr>
                 )}
               </tbody>
             </table>
           </section>
 
-          {/* Trade References */}
-          <section className="mb-8">
-            <h2 className="text-sm font-bold text-gray-800 border-b-2 border-gray-300 pb-2 mb-3">TRADE REFERENCES</h2>
-            <table className="w-full text-sm">
+          {/* 4. Trade References (Supplier References) */}
+          <section className="mb-4">
+            <h2 className="text-sm font-bold mb-1" style={{ color: NAVY }}>4. TRADE REFERENCES (SUPPLIER REFERENCES)</h2>
+            <p className="text-xs mb-2" style={{ color: NAVY }}>Provide at least <span className="font-bold">three</span> suppliers you have credit history with</p>
+            <table className="w-full text-sm border" style={{ borderColor: NAVY, color: NAVY }}>
               <thead>
-                <tr className="border-b border-gray-300">
-                  <th className="text-left py-2 font-semibold text-gray-700">Supplier Name</th>
-                  <th className="text-left py-2 font-semibold text-gray-700">Contact Person</th>
-                  <th className="text-left py-2 font-semibold text-gray-700">Phone Number</th>
-                  <th className="text-right py-2 font-semibold text-gray-700">Credit Limit</th>
+                <tr className="border-b" style={{ borderColor: NAVY }}>
+                  <th className="text-left py-1.5 px-2 font-bold border-r w-10" style={{ borderColor: NAVY }}>#</th>
+                  <th className="text-left py-1.5 px-2 font-bold border-r" style={{ borderColor: NAVY }}>Supplier Name</th>
+                  <th className="text-left py-1.5 px-2 font-bold border-r" style={{ borderColor: NAVY }}>Contact Person &amp; Phone Number</th>
+                  <th className="text-right py-1.5 px-2 font-bold">Credit Limit (Ksh)</th>
                 </tr>
               </thead>
               <tbody>
                 {account?.suppliers && account.suppliers.length > 0 ? (
-                  account.suppliers.map((supplier) => (
-                    <tr key={supplier.id} className="border-b border-gray-200">
-                      <td className="py-2 text-gray-900">{field(supplier.name)}</td>
-                      <td className="py-2 text-gray-900">{field(supplier.contact_person_name)}</td>
-                      <td className="py-2 text-gray-900">{field(supplier.phone_number)}</td>
-                      <td className="py-2 text-gray-900 text-right">{formatMoney(supplier.credit_limit)}</td>
+                  account.suppliers.map((supplier, i) => (
+                    <tr key={supplier.id} className="border-b" style={{ borderColor: NAVY }}>
+                      <td className="py-1.5 px-2 border-r font-bold" style={{ borderColor: NAVY, color: VALUE_COLOR }}>{i + 1}.</td>
+                      <td className="py-1.5 px-2 border-r font-bold" style={{ borderColor: NAVY, color: VALUE_COLOR }}>{field(supplier.name)}</td>
+                      <td className="py-1.5 px-2 border-r font-bold" style={{ borderColor: NAVY, color: VALUE_COLOR }}>
+                        {[supplier.contact_person_name, supplier.phone_number].filter(Boolean).join(" — ") || "—"}
+                      </td>
+                      <td className="py-1.5 px-2 text-right font-bold" style={{ color: VALUE_COLOR }}>{formatMoney(supplier.credit_limit)}</td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={4} className="py-3 text-gray-500 text-center">No trade references on record</td>
+                    <td colSpan={4} className="py-3 text-center opacity-70">No trade references on record</td>
                   </tr>
                 )}
               </tbody>
             </table>
           </section>
 
-          {/* Bank Details */}
-          <section className="mb-8">
-            <h2 className="text-sm font-bold text-gray-800 border-b-2 border-gray-300 pb-2 mb-3">BANK DETAILS</h2>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-300">
-                  <th className="text-left py-2 font-semibold text-gray-700">Account Name</th>
-                  <th className="text-left py-2 font-semibold text-gray-700">Bank Name</th>
-                  <th className="text-left py-2 font-semibold text-gray-700">Branch</th>
-                  <th className="text-left py-2 font-semibold text-gray-700">Account Number</th>
-                </tr>
-              </thead>
-              <tbody>
-                {account?.bank_details && account.bank_details.length > 0 ? (
-                  account.bank_details.map((bank) => (
-                    <tr key={bank.id} className="border-b border-gray-200">
-                      <td className="py-2 text-gray-900">{field(bank.account_name)}</td>
-                      <td className="py-2 text-gray-900">{field(bank.bank_name)}</td>
-                      <td className="py-2 text-gray-900">{field(bank.branch)}</td>
-                      <td className="py-2 text-gray-900">{field(bank.account_number)}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={4} className="py-3 text-gray-500 text-center">No bank details on record</td>
+          {/* 5. Bank Details */}
+          <section className="mb-4">
+            <h2 className="text-sm font-bold mb-2" style={{ color: NAVY }}>5. BANK DETAILS</h2>
+            {account?.bank_details && account.bank_details.length > 0 ? (
+              <table className="w-full text-sm border" style={{ borderColor: NAVY, color: NAVY }}>
+                <thead>
+                  <tr className="border-b" style={{ borderColor: NAVY }}>
+                    <th className="text-left py-1.5 px-2 font-bold border-r" style={{ borderColor: NAVY }}>Bank Name</th>
+                    <th className="text-left py-1.5 px-2 font-bold border-r" style={{ borderColor: NAVY }}>Branch</th>
+                    <th className="text-left py-1.5 px-2 font-bold border-r" style={{ borderColor: NAVY }}>Account Name</th>
+                    <th className="text-left py-1.5 px-2 font-bold">Account Number</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {account.bank_details.map((bank) => (
+                    <tr key={bank.id} className="border-b" style={{ borderColor: NAVY }}>
+                      <td className="py-1.5 px-2 border-r font-bold" style={{ borderColor: NAVY, color: VALUE_COLOR }}>{field(bank.bank_name)}</td>
+                      <td className="py-1.5 px-2 border-r font-bold" style={{ borderColor: NAVY, color: VALUE_COLOR }}>{field(bank.branch)}</td>
+                      <td className="py-1.5 px-2 border-r font-bold" style={{ borderColor: NAVY, color: VALUE_COLOR }}>{field(bank.account_name)}</td>
+                      <td className="py-1.5 px-2 font-bold" style={{ color: VALUE_COLOR }}>{field(bank.account_number)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="text-sm" style={{ color: NAVY }}>No bank details on record</p>
+            )}
           </section>
 
-          {/* Credit Terms */}
-          <section className="mb-8">
-            <h2 className="text-sm font-bold text-gray-800 border-b-2 border-gray-300 pb-2 mb-3">CREDIT TERMS</h2>
-            <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
-              <div><span className="text-gray-600">Annual Turnover:</span> <span className="text-gray-900 font-medium">{formatMoney(account?.annual_turnover)}</span></div>
-              <div><span className="text-gray-600">Credit Required:</span> <span className="text-gray-900 font-medium">{formatMoney(account?.credit_required)}</span></div>
-              <div><span className="text-gray-600">Credit Period Required:</span> <span className="text-gray-900 font-medium">{field(account?.credit_period_required)}</span></div>
-              <div><span className="text-gray-600">PD Cheque Days:</span> <span className="text-gray-900 font-medium">{field(account?.credit_period_pd_cheque_days)}</span></div>
-              <div><span className="text-gray-600">Credit Days:</span> <span className="text-gray-900 font-medium">{field(account?.credit_days)}</span></div>
-              <div className="col-span-2"><span className="text-gray-600">Credit Terms:</span> <span className="text-gray-900 font-medium">{field(account?.credit_terms)}</span></div>
+          {/* 6. Credit Terms */}
+          <section className="mb-4">
+            <h2 className="text-sm font-bold mb-3" style={{ color: NAVY }}>6. CREDIT TERMS</h2>
+            <div className="space-y-1">
+              <FormLine label="1.) Turnover KES" value={formatMoney(account?.annual_turnover)} wide />
+              <FormLine label="2.) Credit Limit (KES)" value={formatMoney(account?.credit_required)} wide />
+              <div className="flex flex-wrap items-center gap-x-4 text-sm py-1">
+                <span className="font-bold" style={{ color: NAVY }}>3.) Credit Period (days):</span>
+                {["30", "45"].map((opt) => (
+                  <span key={opt} style={{ color: NAVY }}>
+                    <span className="inline-block w-3.5 h-3.5 border align-middle mr-1 text-center leading-none text-[10px]" style={{ borderColor: NAVY }}>
+                      {String(account?.credit_period_required || "") === opt ? "✓" : ""}
+                    </span>
+                    {opt}
+                  </span>
+                ))}
+                {account?.credit_period_required && !["30", "45"].includes(String(account.credit_period_required)) && (
+                  <span className="font-bold" style={{ color: VALUE_COLOR }}>(as captured: {account.credit_period_required})</span>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-x-4 text-sm py-1">
+                <span className="font-bold" style={{ color: NAVY }}>4.) Credit Period (days) on PD Cheques:</span>
+                {[60, 90].map((opt) => (
+                  <span key={opt} style={{ color: NAVY }}>
+                    <span className="inline-block w-3.5 h-3.5 border align-middle mr-1 text-center leading-none text-[10px]" style={{ borderColor: NAVY }}>
+                      {account?.credit_period_pd_cheque_days != null && Number(account.credit_period_pd_cheque_days) === opt ? "✓" : ""}
+                    </span>
+                    {opt}
+                  </span>
+                ))}
+                {account?.credit_period_pd_cheque_days != null && ![60, 90].includes(Number(account.credit_period_pd_cheque_days)) && (
+                  <span className="font-bold" style={{ color: VALUE_COLOR }}>(as captured: {account.credit_period_pd_cheque_days})</span>
+                )}
+              </div>
+              {account?.credit_terms && <FormLine label="Additional Terms" value={account.credit_terms} wide />}
             </div>
-          </section>
-
-          {/* Declaration - printed blank for physical hand-signing */}
-          <section className="mb-8 pt-4 border-t border-gray-300">
-            <h2 className="text-sm font-bold text-gray-800 mb-4">DECLARATION</h2>
-            <p className="text-xs text-gray-600 mb-6">
-              I/We confirm that the information provided in this form is true and accurate to the best of my/our knowledge.
+            <p className="text-xs mt-4" style={{ color: NAVY }}>
+              <span className="font-bold">Late Payment:</span> Any payment made beyond the agreed credit period shall attract a late payment charge equivalent to three percent (3%) of the outstanding amount.
             </p>
-            <div className="grid grid-cols-2 gap-x-8 gap-y-8 text-sm">
-              <div>
-                <div className="border-b border-gray-400 h-8" />
-                <p className="text-xs text-gray-600 mt-1">Director Name</p>
-              </div>
-              <div>
-                <div className="border-b border-gray-400 h-8" />
-                <p className="text-xs text-gray-600 mt-1">Designation</p>
-              </div>
-              <div>
-                <div className="border-b border-gray-400 h-8" />
-                <p className="text-xs text-gray-600 mt-1">Signature</p>
-              </div>
-              <div>
-                <div className="border-b border-gray-400 h-8" />
-                <p className="text-xs text-gray-600 mt-1">Date</p>
-              </div>
+          </section>
+          <hr className="mb-4" style={{ borderTopWidth: 2, borderColor: NAVY }} />
+
+          {/* 7. Declaration - printed blank for physical hand-signing */}
+          <section className="mb-4">
+            <h2 className="text-sm font-bold mb-2" style={{ color: NAVY }}>7. DECLARATION</h2>
+            <p className="text-sm mb-1" style={{ color: NAVY }}>
+              I/We declare that the information provided is true and correct. I/We authorise <span className="font-bold">{company?.name || "the Supplier"}</span> to request credit information from the references and to conduct due diligence.
+            </p>
+            <p className="text-sm mb-3" style={{ color: NAVY }}>
+              I/WE agree to comply with your <span className="font-bold">credit terms</span>,
+            </p>
+            <div className="space-y-1">
+              {account?.directors && account.directors.length > 1 ? (
+                <>
+                  <div className="text-sm py-1 print:hidden flex items-center gap-2">
+                    <span className="font-bold" style={{ color: NAVY }}>Name of Director :</span>
+                    <Select value={selectedDirectorId} onValueChange={setSelectedDirectorId}>
+                      <SelectTrigger className="h-8 w-64" style={{ color: NAVY, borderColor: NAVY }}>
+                        <SelectValue placeholder="Select director" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {account.directors.map((d) => (
+                          <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="hidden print:block">
+                    <FormLine
+                      label="Name of Director"
+                      value={account.directors.find((d) => d.id === selectedDirectorId)?.name}
+                      wide
+                    />
+                  </div>
+                </>
+              ) : (
+                <FormLine label="Name of Director" value={account?.directors?.[0]?.name} wide />
+              )}
+              <FormLine label="Designation" value={null} wide />
+              <FormLine label="Signature" value={null} wide />
+              <FormLine label="Company Stamp" value={null} wide />
+              <FormLine label="Date" value={null} wide />
             </div>
           </section>
 
-          {/* For Official Use - printed blank for internal stamping */}
-          <section className="pt-4 border-t border-gray-300">
-            <h2 className="text-sm font-bold text-gray-800 mb-4">FOR OFFICIAL USE ONLY</h2>
-            <div className="grid grid-cols-2 gap-x-8 gap-y-8 text-sm">
-              <div>
-                <div className="border-b border-gray-400 h-8" />
-                <p className="text-xs text-gray-600 mt-1">Reviewed By</p>
-              </div>
-              <div>
-                <div className="border-b border-gray-400 h-8" />
-                <p className="text-xs text-gray-600 mt-1">Approved Credit Limit</p>
-              </div>
-              <div>
-                <div className="border-b border-gray-400 h-8" />
-                <p className="text-xs text-gray-600 mt-1">Approved Credit Days</p>
-              </div>
-              <div>
-                <div className="border-b border-gray-400 h-8" />
-                <p className="text-xs text-gray-600 mt-1">Date / Stamp</p>
-              </div>
+          {/* 8. For Official Use Only - the GM's digital sign-off. Editable/
+              savable on screen for approvers; renders as a plain read-only
+              summary when printed/downloaded, matching the rest of the document. */}
+          <section>
+            <h2 className="text-sm font-bold mb-2" style={{ color: NAVY }}>8. FOR OFFICIAL USE ONLY (Supplier Section)</h2>
+
+            {/* Print-only summary */}
+            <div className="hidden print:block space-y-1">
+              <FormLine label="Review By" value={reviewedByName} wide />
+              <FormLine label="Position" value={reviewedByPosition} wide />
+              <FormLine label="Approved Credit Limit (KES)" value={formatMoney(approvedCreditLimit)} wide />
+              <FormLine label="Approved Credit Terms (Days)" value={approvedCreditDays} wide />
+              <FormLine label="Date Approved" value={account?.updated_at ? new Date(account.updated_at).toLocaleDateString() : null} wide />
+              <FormLine label="Remarks" value={officialRemarks} wide />
+            </div>
+
+            {/* On-screen editable form */}
+            <div className="print:hidden">
+              {!account ? (
+                <p className="text-sm text-muted-foreground">
+                  These fields become available once the customer has a credit account (after Stage 1 approval).
+                </p>
+              ) : canEditOfficialUse ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
+                    <div className="space-y-1">
+                      <Label htmlFor="reviewed-by-name" className="text-xs font-bold" style={{ color: NAVY }}>Review By</Label>
+                      <Input
+                        id="reviewed-by-name"
+                        value={reviewedByName}
+                        onChange={(e) => setReviewedByName(e.target.value)}
+                        disabled={isSavingOfficialUse}
+                        className={DOC_INPUT_CLASS}
+                        style={{ color: VALUE_COLOR, borderColor: NAVY }}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="reviewed-by-position" className="text-xs font-bold" style={{ color: NAVY }}>Position</Label>
+                      <Input
+                        id="reviewed-by-position"
+                        value={reviewedByPosition}
+                        onChange={(e) => setReviewedByPosition(e.target.value)}
+                        disabled={isSavingOfficialUse}
+                        className={DOC_INPUT_CLASS}
+                        style={{ color: VALUE_COLOR, borderColor: NAVY }}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
+                    <div className="space-y-1">
+                      <Label className="text-xs font-bold" style={{ color: NAVY }}>Approved Credit Limit (KES)</Label>
+                      <Input
+                        id="approved-credit-limit"
+                        type="number"
+                        min="0"
+                        value={approvedCreditLimit}
+                        onChange={(e) => setApprovedCreditLimit(e.target.value)}
+                        disabled={isSavingOfficialUse}
+                        className={DOC_INPUT_CLASS}
+                        style={{ color: VALUE_COLOR, borderColor: NAVY }}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="approved-credit-days" className="text-xs font-bold" style={{ color: NAVY }}>Approved Credit Terms (Days)</Label>
+                      <Input
+                        id="approved-credit-days"
+                        type="number"
+                        min="0"
+                        value={approvedCreditDays}
+                        onChange={(e) => setApprovedCreditDays(e.target.value)}
+                        disabled={isSavingOfficialUse}
+                        className={DOC_INPUT_CLASS}
+                        style={{ color: VALUE_COLOR, borderColor: NAVY }}
+                      />
+                    </div>
+                  </div>
+                  <FormLine label="Date Approved" value={account.updated_at ? new Date(account.updated_at).toLocaleDateString() : null} wide />
+                  <div className="space-y-1">
+                    <Label htmlFor="official-remarks" className="text-xs font-bold" style={{ color: NAVY }}>Remarks</Label>
+                    <Textarea
+                      id="official-remarks"
+                      value={officialRemarks}
+                      onChange={(e) => setOfficialRemarks(e.target.value)}
+                      rows={2}
+                      disabled={isSavingOfficialUse}
+                      className={DOC_TEXTAREA_CLASS}
+                      style={{ color: VALUE_COLOR, borderColor: NAVY, border: `1px solid ${NAVY}` }}
+                    />
+                  </div>
+                  <Button size="sm" onClick={handleSaveOfficialUse} disabled={isSavingOfficialUse}>
+                    {isSavingOfficialUse ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4 mr-2" />
+                    )}
+                    {isSavingOfficialUse ? "Saving..." : "Save"}
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <FormLine label="Review By" value={reviewedByName} wide />
+                  <FormLine label="Position" value={reviewedByPosition} wide />
+                  <FormLine label="Approved Credit Limit" value={formatMoney(approvedCreditLimit)} wide />
+                  <FormLine label="Approved Credit Terms (Days)" value={approvedCreditDays} wide />
+                </div>
+              )}
             </div>
           </section>
         </Card>

@@ -33,6 +33,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Employee } from "@/lib/employees";
 import { employeesApi } from "@/lib/employees";
 import { getUsers, type UserData } from "@/lib/users";
+import { useAuth } from "@/lib/auth-context";
 
 // Type for allowance/deduction items
 interface AllowanceDeductionItem {
@@ -52,11 +53,17 @@ interface EditEmployeeSheetProps {
 export function EditEmployeeSheet({ employee, open, onOpenChange, onSuccess }: EditEmployeeSheetProps) {
   const [loading, setLoading] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [users, setUsers] = useState<UserData[]>([]);
+  // Restricted to actual GM/Director (or anyone explicitly granted the matching
+  // approval permission) - not just any employee, so this can't be pointed at
+  // someone with no real authority to approve leave/salary changes.
+  const [leaveApprovers, setLeaveApprovers] = useState<UserData[]>([]);
+  const [salaryApprovers, setSalaryApprovers] = useState<UserData[]>([]);
   const [employeesLoading, setEmployeesLoading] = useState(false);
   const [leaveApproverSearchOpen, setLeaveApproverSearchOpen] = useState(false);
   const [salaryAdvanceApproverSearchOpen, setSalaryAdvanceApproverSearchOpen] = useState(false);
   const { toast } = useToast();
+  const { hasPermission } = useAuth();
+  const canEditSalary = hasPermission("can_approve_salary_changes");
   
   const [formData, setFormData] = useState({
     // Personal Information
@@ -258,10 +265,29 @@ export function EditEmployeeSheet({ employee, open, onOpenChange, onSuccess }: E
     }
   };
 
+  // The currently-assigned approver may no longer hold the permission (e.g.
+  // an old assignment predating this restriction) and so won't be in the
+  // filtered list below - fall back to the employee's own approver relation
+  // so the field doesn't just render blank.
+  const getApproverLabel = (
+    userId: string,
+    list: UserData[],
+    fallback?: { first_name: string; last_name: string; email?: string } | null
+  ) => {
+    const match = list.find((user) => user.id === userId);
+    const source = match || fallback;
+    if (!source) return "Unknown user";
+    return [source.first_name, source.last_name].filter(Boolean).join(" ") || source.email || "Unknown user";
+  };
+
   const fetchUsersForApproverSelection = async () => {
     try {
-      const data = await getUsers();
-      setUsers(data || []);
+      const [leaveData, salaryData] = await Promise.all([
+        getUsers({ role_scope: "can_approve_leave" }),
+        getUsers({ role_scope: "can_approve_salary_changes" }),
+      ]);
+      setLeaveApprovers(leaveData || []);
+      setSalaryApprovers(salaryData || []);
     } catch (error) {
       console.error("Failed to load users for approver selection", error);
     }
@@ -686,12 +712,7 @@ export function EditEmployeeSheet({ employee, open, onOpenChange, onSuccess }: E
                           className="w-full justify-between font-normal"
                         >
                           {formData.leave_approver_id
-                            ? [
-                                users.find((user) => user.id === formData.leave_approver_id)?.first_name,
-                                users.find((user) => user.id === formData.leave_approver_id)?.last_name,
-                              ]
-                                .filter(Boolean)
-                                .join(" ") || users.find((user) => user.id === formData.leave_approver_id)?.email
+                            ? getApproverLabel(formData.leave_approver_id, leaveApprovers, employee?.leave_approver)
                             : "Select leave approver"}
                           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                         </Button>
@@ -717,7 +738,7 @@ export function EditEmployeeSheet({ employee, open, onOpenChange, onSuccess }: E
                                 />
                                 Not assigned
                               </CommandItem>
-                              {users.map((user) => {
+                              {leaveApprovers.map((user) => {
                                 const label = [user.first_name, user.last_name].filter(Boolean).join(" ") || user.email;
                                 return (
                                   <CommandItem
@@ -743,6 +764,14 @@ export function EditEmployeeSheet({ employee, open, onOpenChange, onSuccess }: E
                         </Command>
                       </PopoverContent>
                     </Popover>
+                    <p className="text-xs text-muted-foreground">
+                      Only GM, Directors, or users explicitly granted leave-approval rights can be picked here.
+                    </p>
+                    {formData.leave_approver_id && !leaveApprovers.some((u) => u.id === formData.leave_approver_id) && (
+                      <p className="text-xs text-amber-600">
+                        Current assignee no longer has approval rights - consider reassigning.
+                      </p>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="salary_advance_approver_id">Salary Advance Approver</Label>
@@ -755,12 +784,7 @@ export function EditEmployeeSheet({ employee, open, onOpenChange, onSuccess }: E
                           className="w-full justify-between font-normal"
                         >
                           {formData.salary_advance_approver_id
-                            ? [
-                                users.find((user) => user.id === formData.salary_advance_approver_id)?.first_name,
-                                users.find((user) => user.id === formData.salary_advance_approver_id)?.last_name,
-                              ]
-                                .filter(Boolean)
-                                .join(" ") || users.find((user) => user.id === formData.salary_advance_approver_id)?.email
+                            ? getApproverLabel(formData.salary_advance_approver_id, salaryApprovers, employee?.salary_advance_approver)
                             : "Select salary advance approver"}
                           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                         </Button>
@@ -786,7 +810,7 @@ export function EditEmployeeSheet({ employee, open, onOpenChange, onSuccess }: E
                                 />
                                 Not assigned
                               </CommandItem>
-                              {users.map((user) => {
+                              {salaryApprovers.map((user) => {
                                 const label = [user.first_name, user.last_name].filter(Boolean).join(" ") || user.email;
                                 return (
                                   <CommandItem
@@ -812,6 +836,14 @@ export function EditEmployeeSheet({ employee, open, onOpenChange, onSuccess }: E
                         </Command>
                       </PopoverContent>
                     </Popover>
+                    <p className="text-xs text-muted-foreground">
+                      Only GM, Directors, or users explicitly granted salary-approval rights can be picked here.
+                    </p>
+                    {formData.salary_advance_approver_id && !salaryApprovers.some((u) => u.id === formData.salary_advance_approver_id) && (
+                      <p className="text-xs text-amber-600">
+                        Current assignee no longer has approval rights - consider reassigning.
+                      </p>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -826,9 +858,10 @@ export function EditEmployeeSheet({ employee, open, onOpenChange, onSuccess }: E
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="payment_frequency">Payment Frequency</Label>
-                    <Select 
-                      value={formData.payment_frequency} 
+                    <Select
+                      value={formData.payment_frequency}
                       onValueChange={(value) => setFormData({ ...formData, payment_frequency: value })}
+                      disabled={!canEditSalary}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Select payment frequency" />
@@ -849,10 +882,16 @@ export function EditEmployeeSheet({ employee, open, onOpenChange, onSuccess }: E
                       value={formData.basic_salary}
                       onChange={(e) => setFormData({ ...formData, basic_salary: e.target.value })}
                       placeholder="50000.00"
+                      disabled={!canEditSalary}
                     />
                   </div>
                 </div>
-                
+                {!canEditSalary && (
+                  <p className="text-xs text-muted-foreground">
+                    Only GM or Directors can change compensation (payment frequency, salary, allowances, deductions).
+                  </p>
+                )}
+
                 <div className="grid grid-cols-3 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="kra_pin">KRA PIN</Label>
@@ -994,6 +1033,7 @@ export function EditEmployeeSheet({ employee, open, onOpenChange, onSuccess }: E
                     type="button"
                     variant="outline"
                     size="sm"
+                    disabled={!canEditSalary}
                     onClick={() => {
                       setFormData({ ...formData, allowances: [...formData.allowances, { name: "", amount: "", frequency: "monthly", is_taxable: true }] });
                     }}
@@ -1003,6 +1043,12 @@ export function EditEmployeeSheet({ employee, open, onOpenChange, onSuccess }: E
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                {!canEditSalary && (
+                  <p className="text-xs text-muted-foreground">
+                    Only GM or Directors can change allowances.
+                  </p>
+                )}
+                <fieldset disabled={!canEditSalary} className="contents">
                 {formData.allowances.length === 0 ? (
                   <p className="text-gray-500 text-sm">No allowances added. Click &quot;Add Allowance&quot; to get started.</p>
                 ) : (
@@ -1085,6 +1131,7 @@ export function EditEmployeeSheet({ employee, open, onOpenChange, onSuccess }: E
                     </div>
                   ))
                 )}
+                </fieldset>
               </CardContent>
             </Card>
 
@@ -1097,6 +1144,7 @@ export function EditEmployeeSheet({ employee, open, onOpenChange, onSuccess }: E
                     type="button"
                     variant="outline"
                     size="sm"
+                    disabled={!canEditSalary}
                     onClick={() => {
                       setFormData({ ...formData, deductions: [...formData.deductions, { name: "", amount: "", frequency: "monthly", is_taxable: false }] });
                     }}
@@ -1106,6 +1154,12 @@ export function EditEmployeeSheet({ employee, open, onOpenChange, onSuccess }: E
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                {!canEditSalary && (
+                  <p className="text-xs text-muted-foreground">
+                    Only GM or Directors can change deductions.
+                  </p>
+                )}
+                <fieldset disabled={!canEditSalary} className="contents">
                 {formData.deductions.length === 0 ? (
                   <p className="text-gray-500 text-sm">No deductions added. Click &quot;Add Deduction&quot; to get started.</p>
                 ) : (
@@ -1175,9 +1229,10 @@ export function EditEmployeeSheet({ employee, open, onOpenChange, onSuccess }: E
                   </div>
                   ))
                 )}
+                </fieldset>
               </CardContent>
             </Card>
-            
+
           </div>
           
           {/* Sticky Footer */}

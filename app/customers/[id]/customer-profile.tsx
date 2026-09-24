@@ -601,9 +601,9 @@ export function CustomerProfile({ customerId, isOpen, onClose }: CustomerProfile
           <div className="p-6 border-b border-gray-100 bg-gradient-to-r from-gray-50 to-gray-100">
             <div className="flex items-start gap-5">
               <Avatar className="h-20 w-20 border-4 border-white shadow-md">
-                <AvatarImage src={customer.avatar_url || ""} alt={customer.customer_type === "company" ? (customer.business_name || customer.name) : customer.name} />
+                <AvatarImage src={customer.avatar_url || ""} alt={customer.business_name || customer.name} />
                 <AvatarFallback className="bg-primary text-white text-2xl">
-                  {getInitials(customer.customer_type === "company" ? (customer.business_name || customer.name) : customer.name)}
+                  {getInitials(customer.business_name || customer.name)}
                 </AvatarFallback>
               </Avatar>
               <div className="flex-1 min-w-0">
@@ -611,7 +611,7 @@ export function CustomerProfile({ customerId, isOpen, onClose }: CustomerProfile
                   {isEditing ? (
                     <div className="w-full">
                       <Label htmlFor="customer-name" className="text-sm text-gray-600 mb-1 block">
-                        {customer.customer_type === "company" ? "Business Name" : "Customer Name"}
+                        {customer.business_name ? "Contact/Customer Name" : "Customer Name"}
                       </Label>
                       <Input
                         id="customer-name"
@@ -622,7 +622,9 @@ export function CustomerProfile({ customerId, isOpen, onClose }: CustomerProfile
                     </div>
                   ) : (
                     <h3 className="text-3xl font-bold text-gray-900">
-                      {customer.customer_type === "company" ? (customer.business_name || customer.name) : customer.name}
+                      {/* Show a captured business name whenever it exists,
+                          not just for customer_type === "company". */}
+                      {customer.business_name || customer.name}
                     </h3>
                   )}
                   <Badge
@@ -788,6 +790,7 @@ export function CustomerProfile({ customerId, isOpen, onClose }: CustomerProfile
             <ApplicationStatusSection
               customerId={customerId}
               approvalStatus={customer.approval_status}
+              customer={customer}
               onRefresh={fetchCustomerData}
             />
           </div>

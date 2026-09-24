@@ -58,7 +58,9 @@ interface CreditNotesTableProps {
 }
 
 function getCustomerDisplayName(creditNote: CreditNote) {
-  if (creditNote.customer?.customer_type === "company" && creditNote.customer?.business_name) {
+  // Show a captured business name whenever it exists, not just for
+  // customer_type === "company" - individuals can fill this in too now.
+  if (creditNote.customer?.business_name) {
     return creditNote.customer.business_name
   }
 

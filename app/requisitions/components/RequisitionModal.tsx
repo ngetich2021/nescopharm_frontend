@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { type Requisition } from "@/lib/requisitions";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/lib/auth-context";
 import { EditRequisitionModal } from "./EditRequisitionModal";
 import { DeleteRequisitionConfirmationDialog } from "./DeleteRequisitionConfirmationDialog";
 import { ApproveRequisitionModal } from "./ApproveRequisitionModal";
@@ -58,6 +59,7 @@ export function RequisitionModal({
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [approveModalOpen, setApproveModalOpen] = useState(false);
   const { toast } = useToast();
+  const { hasPermission } = useAuth();
 
   useEffect(() => {
     setCurrentRequisition(initialRequisition);
@@ -86,9 +88,9 @@ export function RequisitionModal({
     // Keep the main modal open to show updated status
   };
 
-  const canEdit = currentRequisition?.status === "pending" && currentRequisition?.approval_status === "pending";
-  const canDelete = currentRequisition?.status === "pending" && currentRequisition?.approval_status === "pending";
-  const canApprove = currentRequisition?.approval_status === "pending";
+  const canEdit = currentRequisition?.status === "pending" && currentRequisition?.approval_status === "pending" && hasPermission("can_update_requisitions");
+  const canDelete = currentRequisition?.status === "pending" && currentRequisition?.approval_status === "pending" && hasPermission("can_delete_requisitions");
+  const canApprove = currentRequisition?.approval_status === "pending" && hasPermission("can_approve_requisitions");
   const canCreateDispatch = currentRequisition?.approval_status === "approved" && !currentRequisition?.dispatch_id;
 
   const getStatusBadge = (status: string) => {
@@ -240,11 +242,16 @@ export function RequisitionModal({
                                 <Package className="h-6 w-6 text-gray-500" />
                               </div>
                               <div className="flex-1">
-                                <h4 className="font-medium">{item.product.name}</h4>
+                                <div className="flex items-center gap-2">
+                                  <h4 className="font-medium">{item.product?.name || item.custom_item_name}</h4>
+                                  {!item.product && (
+                                    <Badge variant="secondary" className="text-xs">Custom item</Badge>
+                                  )}
+                                </div>
                                 <div className="flex items-center space-x-4 text-sm text-gray-500 mt-1">
-                                  <span>SKU: {item.product.sku}</span>
+                                  {item.product && <span>SKU: {item.product.sku}</span>}
                                   {item.variant && <span>Variant: {item.variant.name}</span>}
-                                  <span>Category: {item.product.category}</span>
+                                  {item.product && <span>Category: {item.product.category}</span>}
                                 </div>
                                 {item.notes && (
                                   <p className="text-sm text-gray-600 mt-1">{item.notes}</p>
@@ -255,7 +262,7 @@ export function RequisitionModal({
                           <div className="text-right">
                             <div className="font-semibold">Qty: {item.quantity}</div>
                             <div className="text-sm text-gray-500">
-                              {item.product.unit_of_measurement}
+                              {item.product?.unit_of_measurement}
                             </div>
                           </div>
                         </div>

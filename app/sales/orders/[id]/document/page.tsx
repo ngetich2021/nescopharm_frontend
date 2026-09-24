@@ -173,9 +173,10 @@ export default function OrderDocumentPage({ params }: { params: Promise<{ id: st
       })
     : 'Customer'
 
-  const isCompanyCustomer =
-    (customerDetails?.customer_type || order.customer?.customer_type) === 'company' &&
-    !!(customerDetails?.business_name || order.customer?.business_name)
+  // Show the "c/o <contact person>" line whenever a business name was
+  // actually captured, not just for customer_type === 'company' -
+  // individuals can fill this in too now.
+  const isCompanyCustomer = !!(customerDetails?.business_name || order.customer?.business_name)
 
   const deliveryLocation = order.delivery_location
   const deliveryAddressParts = deliveryLocation

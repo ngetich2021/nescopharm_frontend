@@ -342,6 +342,9 @@ export interface InvoicePayment {
   transaction_id: string | null;
   amount_paid: string | number;
   amount_applied: string | number;
+  // Unapplied excess still sitting on this Payment record (not this invoice) -
+  // e.g. the customer paid more than the invoice total in one lump sum.
+  available_to_refund: number;
   status: string;
   payment_date: string;
   applied_date: string;
@@ -445,6 +448,8 @@ export interface PaymentAvailabilityResponse {
   payment_date: string;
   total_amount: string;
   allocated_amount: string;
+  refunded_amount: string;
+  pending_refund_amount: string;
   available_amount: string;
   is_fully_allocated: boolean;
   allocation_percentage: number;
@@ -605,6 +610,37 @@ export async function getPaymentAvailableAmount(paymentId: string): Promise<Paym
     return response.data;
   } catch (error: any) {
     throw new Error(`Failed to fetch payment availability: ${error.message || "Unknown error"}`);
+  }
+}
+
+export interface RefundPaymentOverpaymentRequest {
+  amount: number;
+  refund_method: "bank_transfer" | "cash" | "mobile_money" | "cheque" | "other";
+  reference?: string;
+  reason: string;
+  notes?: string;
+  refund_date?: string;
+  // Required when refund_method is "cheque" - stays pending until approved/cleared.
+  cheque_number?: string;
+  bank_name?: string;
+  maturity_date?: string;
+}
+
+// Refund unapplied excess off a customer payment (e.g. they overpaid an invoice).
+export async function refundPaymentOverpayment(
+  paymentId: string,
+  payload: RefundPaymentOverpaymentRequest
+): Promise<{ message: string }> {
+  try {
+    const response = await apiCall<{ status: string; message: string; data: any }>(
+      `/payments/${paymentId}/refund-overpayment`,
+      "POST",
+      payload,
+      true
+    );
+    return { message: response.message };
+  } catch (error: any) {
+    throw new Error(error.message || "Failed to record refund");
   }
 }
 

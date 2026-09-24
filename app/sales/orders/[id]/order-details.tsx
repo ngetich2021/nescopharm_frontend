@@ -44,6 +44,7 @@ interface OrderItem {
   product_id: string;
   quantity: number;
   unit_price: string;
+  price_label?: string | null;
   total_price: string;
   created_at: string;
   updated_at: string;
@@ -242,6 +243,11 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
   const totalPaid = payments.reduce((sum, payment) => sum + parseFloat(payment.amount_paid), 0);
 
   const orderTotal = parseFloat(order.final_amount || order.total_amount)
+  // Already covered (or over-covered) by payments already recorded on this
+  // order - nothing new needs to be collected when the invoice is created.
+  const isOrderFullySettled = totalPaid >= orderTotal - 0.01
+  const orderOverpayment = Math.max(0, totalPaid - orderTotal)
+  const orderRemainingBalance = Math.max(0, orderTotal - totalPaid)
   // No overage check here: this order's outstanding balance is already
   // counted against the customer's available_credit (see backend
   // CustomerController::creditTerms(), which sums every un-invoiced credit
@@ -285,6 +291,13 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
 
   // Function to actually create the invoice, once cash/credit has been chosen (extracted for reuse)
   const createInvoiceFromCompletedOrder = async () => {
+    // Already paid (or overpaid) via payments already on this order - nothing
+    // left to collect, so skip the "how is this being paid" requirements.
+    if (isOrderFullySettled) {
+      await submitInvoiceCreation()
+      return
+    }
+
     if (invoicePaymentOption === 'instant' && !invoicePaymentMethod) {
       toast({
         title: "Error",
@@ -312,6 +325,12 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
       return
     }
 
+    await submitInvoiceCreation()
+  }
+
+  // Actually calls the API to create the invoice - split out so the
+  // already-settled path can skip straight here past the validations above.
+  const submitInvoiceCreation = async () => {
     setIsCreatingInvoice(true)
     try {
       const invoiceData = {
@@ -684,16 +703,12 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
               <div className="flex items-center gap-3">
                 <Avatar className="h-8 w-8 sm:h-10 sm:w-10 bg-purple-100">
                   <AvatarFallback className="text-purple-500 text-xs sm:text-sm">
-                    {((order.customer as any)?.customer_type === "company" 
-                      ? ((order.customer as any)?.business_name || order.customer?.name || "U") 
-                      : (order.customer?.name || "U")).charAt(0)}
+                    {((order.customer as any)?.business_name || order.customer?.name || "U").charAt(0)}
                   </AvatarFallback>
                 </Avatar>
                 <div>
                   <div className="font-medium text-sm sm:text-base">
-                    {(order.customer as any)?.customer_type === "company"
-                      ? ((order.customer as any)?.business_name || order.customer?.name || "Unknown Customer")
-                      : (order.customer?.name || "Unknown Customer")}
+                    {(order.customer as any)?.business_name || order.customer?.name || "Unknown Customer"}
                   </div>
                 </div>
               </div>
@@ -867,6 +882,11 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
                               <div>KES {formatAmount(item.unit_price)}</div>
                               {item.packagingUnit && (
                                 <div className="text-xs text-muted-foreground">per {item.packagingUnit.unit_abbreviation}</div>
+                              )}
+                              {/* Which named price tier this was - staff-only
+                                  reference, never shown on a printed order. */}
+                              {item.price_label && (
+                                <div className="text-xs text-muted-foreground italic">{item.price_label}</div>
                               )}
                             </div>
                           </TableCell>
@@ -1294,9 +1314,29 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
       <Dialog open={showPaymentMethodDialog} onOpenChange={setShowPaymentMethodDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>How is this being paid?</DialogTitle>
+            <DialogTitle>{isOrderFullySettled ? "This order is already settled" : "How is this being paid?"}</DialogTitle>
           </DialogHeader>
+          {isOrderFullySettled ? (
+            <div className="rounded-md bg-green-50 border border-green-200 p-3 text-sm text-green-800">
+              <p>
+                KES {totalPaid.toFixed(2)} is already recorded against this order's total of KES {orderTotal.toFixed(2)}.
+              </p>
+              {orderOverpayment > 0 && (
+                <p className="mt-2">
+                  That's an overpayment of <strong>KES {orderOverpayment.toFixed(2)}</strong>. It won't be
+                  collected again — the invoice will carry it as a credit balance, visible on the invoice
+                  and available to map to a refund or a future invoice.
+                </p>
+              )}
+            </div>
+          ) : (
           <div className="space-y-3">
+            {orderRemainingBalance > 0 && orderRemainingBalance < orderTotal && (
+              <p className="text-xs text-muted-foreground">
+                KES {totalPaid.toFixed(2)} of KES {orderTotal.toFixed(2)} is already recorded on this order -
+                only the remaining KES {orderRemainingBalance.toFixed(2)} needs to be collected now.
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
@@ -1392,6 +1432,7 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
               </div>
             )}
           </div>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowPaymentMethodDialog(false)} disabled={isCreatingInvoice}>
               Cancel
@@ -1400,8 +1441,8 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
               onClick={createInvoiceFromCompletedOrder}
               disabled={
                 isCreatingInvoice ||
-                (invoicePaymentOption === 'credit' && !invoiceCreditTerms?.credit_days) ||
-                (invoiceCreditOverage > 0 && (!coversOverage(invoiceDownPaymentAmount, invoiceCreditOverage) || !invoiceDownPaymentMethod))
+                (!isOrderFullySettled && invoicePaymentOption === 'credit' && !invoiceCreditTerms?.credit_days) ||
+                (!isOrderFullySettled && invoiceCreditOverage > 0 && (!coversOverage(invoiceDownPaymentAmount, invoiceCreditOverage) || !invoiceDownPaymentMethod))
               }
             >
               {isCreatingInvoice ? "Creating..." : "Create Invoice"}

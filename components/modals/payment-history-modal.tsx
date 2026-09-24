@@ -7,7 +7,8 @@ import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { toast } from "@/components/ui/use-toast"
 import { fetchInvoicePaymentHistory, PaymentHistoryResponse, InvoicePayment } from "@/lib/invoices"
-import { Loader2, CreditCard, Calendar, Hash, FileText } from "lucide-react"
+import { RefundPaymentModal } from "@/components/modals/refund-payment-modal"
+import { Loader2, CreditCard, Calendar, Hash, FileText, Undo2 } from "lucide-react"
 
 interface PaymentHistoryModalProps {
   isOpen: boolean
@@ -24,6 +25,7 @@ export function PaymentHistoryModal({
 }: PaymentHistoryModalProps) {
   const [paymentHistory, setPaymentHistory] = useState<PaymentHistoryResponse | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [refundingPayment, setRefundingPayment] = useState<InvoicePayment | null>(null)
 
   useEffect(() => {
     if (isOpen && invoiceId) {
@@ -198,11 +200,29 @@ export function PaymentHistoryModal({
                           )}
                         </div>
                       </div>
-                      
+
                       <div className="text-xs text-muted-foreground">
                         Applied: {formatDateTime(payment.applied_date)}
                       </div>
-                      
+
+                      {payment.available_to_refund > 0 && (
+                        <div className="flex items-center justify-between rounded-md bg-amber-50 border border-amber-200 p-2">
+                          <span className="text-xs text-amber-800">
+                            {formatCurrency(payment.available_to_refund)} overpaid on this payment, unused by any invoice
+                          </span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs"
+                            onClick={() => setRefundingPayment(payment)}
+                          >
+                            <Undo2 className="h-3 w-3 mr-1" />
+                            Refund
+                          </Button>
+                        </div>
+                      )}
+
                       {payment.order_id && (
                         <div className="flex items-center gap-1 text-xs text-muted-foreground">
                           <FileText className="h-3 w-3" />
@@ -225,6 +245,16 @@ export function PaymentHistoryModal({
           <Button onClick={onClose}>Close</Button>
         </div>
       </DialogContent>
+
+      {refundingPayment && (
+        <RefundPaymentModal
+          isOpen={!!refundingPayment}
+          onClose={() => setRefundingPayment(null)}
+          paymentId={refundingPayment.id}
+          availableAmount={refundingPayment.available_to_refund}
+          onRefunded={loadPaymentHistory}
+        />
+      )}
     </Dialog>
   )
 }

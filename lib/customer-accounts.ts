@@ -66,6 +66,12 @@ export interface CustomerAccount {
   credit_terms?: string | null
   current_balance?: string | null
   notes?: string | null
+  // Who actually reviewed/approved this account and in what capacity,
+  // captured as plain text at save time (Section 8 "For Official Use Only"
+  // of the Credit Appraisal Form) - not a live lookup of whoever's currently
+  // viewing, so it stays historically accurate no matter who views it later.
+  reviewed_by_name?: string | null
+  reviewed_by_position?: string | null
   created_by: string
   created_at: string
   updated_at: string

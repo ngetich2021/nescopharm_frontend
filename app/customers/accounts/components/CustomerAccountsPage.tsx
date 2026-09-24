@@ -123,15 +123,17 @@ export function CustomerAccountsPage() {
   // Filter accounts by search
   const filteredAccounts = accounts.filter((account) => {
     const searchLower = search.toLowerCase();
-    const customerName = account.customer 
-      ? (account.customer.customer_type === "company" 
-          ? (account.customer.business_name || account.customer.name || "") 
-          : `${account.customer.first_name || ""} ${account.customer.last_name || ""}`.trim() || account.customer.name || "")
+    const customerName = account.customer
+      ? (account.customer.business_name
+          || `${account.customer.first_name || ""} ${account.customer.last_name || ""}`.trim()
+          || account.customer.name
+          || "")
       : "";
-    
+
     return (
       account.account_number?.toLowerCase().includes(searchLower) ||
       customerName.toLowerCase().includes(searchLower) ||
+      account.customer?.business_name?.toLowerCase().includes(searchLower) ||
       account.customer?.email?.toLowerCase().includes(searchLower)
     );
   });

@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Loader2, Plus, X, Package, Building2, Calendar, Store, MessageSquare, Trash2, UserPlus, Check, ChevronsUpDown } from "lucide-react"
 import { createPurchaseOrder, CreatePurchaseOrderPayload, PurchaseOrderItem } from "@/lib/purchaseorders"
 import { getSuppliers, createSupplier, Supplier } from "@/lib/suppliers"
@@ -65,7 +66,6 @@ export function CreatePurchaseOrderSheet({ open, onOpenChange, onPurchaseOrderCr
   const [logisticsCost, setLogisticsCost] = useState("")
   const [variantOptions, setVariantOptions] = useState<any[]>([])
   const [selectedProduct, setSelectedProduct] = useState<any>(null)
-  const [showVariantModal, setShowVariantModal] = useState(false)
 
   // New Supplier Creation State
   const [showSupplierDialog, setShowSupplierDialog] = useState(false)
@@ -260,24 +260,22 @@ export function CreatePurchaseOrderSheet({ open, onOpenChange, onPurchaseOrderCr
       })
       if (product.has_variations && product.variants && product.variants.length > 0) {
         setVariantOptions(product.variants)
-        setShowVariantModal(true)
       } else {
         setVariantOptions([])
-        setShowVariantModal(false)
       }
     } else {
       setVariantOptions([])
-      setShowVariantModal(false)
     }
   }
 
-  const handleVariantSelectModal = (variant: any) => {
+  const handleVariantSelect = (variantId: string) => {
+    const variant = variantOptions.find(v => v.id === variantId)
+    if (!variant) return
     setNewItem(prev => ({
       ...prev,
       variant_id: variant.id,
       unit_price: parseFloat(variant.price || selectedProduct?.price || "0")
     }))
-    setShowVariantModal(false)
   }
 
   const handleCreateSupplier = async () => {
@@ -584,7 +582,7 @@ export function CreatePurchaseOrderSheet({ open, onOpenChange, onPurchaseOrderCr
               <CardContent className="space-y-5">
                 {/* Add Item Row */}
                 <div className="grid grid-cols-12 gap-3 items-end p-4 bg-muted/30 rounded-lg border border-dashed">
-                  <div className="col-span-5">
+                  <div className={variantOptions.length > 0 ? "col-span-3" : "col-span-5"}>
                     <Label htmlFor="product" className="text-sm font-medium">Product *</Label>
                     <Popover
                       open={productSearchOpen}
@@ -647,6 +645,27 @@ export function CreatePurchaseOrderSheet({ open, onOpenChange, onPurchaseOrderCr
                       </PopoverContent>
                     </Popover>
                   </div>
+
+                  {variantOptions.length > 0 && (
+                    <div className="col-span-2">
+                      <Label htmlFor="variant" className="text-sm font-medium">Variant *</Label>
+                      <Select
+                        value={newItem.variant_id || undefined}
+                        onValueChange={handleVariantSelect}
+                      >
+                        <SelectTrigger id="variant" className="h-10 mt-1.5">
+                          <SelectValue placeholder="Select variant" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {variantOptions.map((variant) => (
+                            <SelectItem key={variant.id} value={variant.id}>
+                              {variant.name} - {formatCurrency(Number(variant.price) || 0)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
 
                   <div className="col-span-2">
                     <Label htmlFor="price" className="text-sm font-medium">Unit Price</Label>
@@ -804,32 +823,6 @@ export function CreatePurchaseOrderSheet({ open, onOpenChange, onPurchaseOrderCr
             </div>
           </div>
         </form>
-
-        {/* Variant Selection Modal */}
-        <Dialog open={showVariantModal} onOpenChange={setShowVariantModal}>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle>Select Variant</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-2 max-h-[400px] overflow-y-auto">
-              {variantOptions.map((variant) => (
-                <Card
-                  key={variant.id}
-                  className="p-4 cursor-pointer hover:shadow-md hover:border-primary/50 transition-all flex justify-between items-center"
-                  onClick={() => handleVariantSelectModal(variant)}
-                >
-                  <div>
-                    <div className="font-medium">{variant.name}</div>
-                    <div className="text-sm text-muted-foreground">{variant.sku}</div>
-                  </div>
-                  <div className="font-bold text-primary">
-                    {formatCurrency(Number(variant.price) || 0)}
-                  </div>
-                </Card>
-              ))}
-            </div>
-          </DialogContent>
-        </Dialog>
 
         {/* New Supplier Dialog */}
         <Dialog open={showSupplierDialog} onOpenChange={setShowSupplierDialog}>

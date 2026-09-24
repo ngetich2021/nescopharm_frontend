@@ -292,7 +292,7 @@ export default function SopsPage() {
   }
 
   return (
-    <PermissionGuard permissions={["can_view_finance_menu", "can_manage_system", "can_manage_company"]}>
+    <PermissionGuard permissions={["can_view_sops_menu", "can_view_sops", "can_manage_system", "can_manage_company"]}>
       <div className="flex-1 space-y-6 p-2 sm:p-4 md:p-8 pt-4 sm:pt-6">
         <div className="flex flex-col sm:flex-row sm:items-center gap-4">
           <h1 className="text-2xl sm:text-3xl font-bold">SOPs</h1>

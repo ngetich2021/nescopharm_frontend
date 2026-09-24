@@ -120,7 +120,7 @@ export default function FinancePage() {
       icon: BarChart3,
       variant: "outline" as const,
       color: "bg-purple-500",
-      permission: "can_generate_financial_reports"
+      permission: "can_view_financial_reports"
     },
   ]
 
@@ -181,7 +181,7 @@ export default function FinancePage() {
       icon: BarChart3,
       color: "text-purple-600",
       bgColor: "bg-purple-50",
-      permission: "can_generate_financial_reports"
+      permission: "can_view_financial_reports"
     },
     {
       title: "Budgets",

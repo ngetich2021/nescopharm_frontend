@@ -8,6 +8,10 @@ import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/lib/auth-context"
 import { Loader2, Eye, EyeOff } from "lucide-react"
 
+// /dashboard is viewable by everyone - it shows the full business view to
+// users with can_view_dashboard_menu, and just a greeting to everyone else -
+// so it's always a safe landing page after sign-in.
+
 export default function SignInPage() {
   const router = useRouter()
   const { toast } = useToast()

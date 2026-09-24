@@ -17,6 +17,7 @@ import { Plus, Search, ShoppingCart, Trash2, X, Wallet, CreditCard as CreditCard
 import { getCreditOverage, coversOverage } from "@/lib/credit-overage"
 import { createPayment } from "@/lib/payments"
 import { CreditOveragePrompt } from "@/components/credit-overage-prompt"
+import { InstantPaymentPrompt } from "@/components/instant-payment-prompt"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import apiCall from "@/lib/api"
@@ -36,6 +37,10 @@ type OrderItem = {
   variant_id?: string
   tax_rate: number
   tax_amount: number
+  // Which named product price tier (e.g. "Hospital Price") this line's price
+  // came from, or "Custom" if hand-typed - internal-only, never printed on
+  // a customer-facing order document.
+  price_label?: string | null
 }
 
 type Company = { id: string; name: string }
@@ -91,6 +96,8 @@ export function CreateOrderModal({
   const [downPaymentAmount, setDownPaymentAmount] = useState(0)
   const [downPaymentMethod, setDownPaymentMethod] = useState("")
   const [downPaymentTransactionRef, setDownPaymentTransactionRef] = useState("")
+  const [instantPaymentMethod, setInstantPaymentMethod] = useState("")
+  const [instantPaymentReference, setInstantPaymentReference] = useState("")
 
   // Default the payment option to whatever this customer is registered as (cash
   // vs GM-approved credit terms), but the user can still switch it for this order.
@@ -350,7 +357,8 @@ export function CreateOrderModal({
         total_price: finalUnitPrice * quantity,
         variant_id: variantId,
         tax_rate: taxRate,
-        tax_amount: taxAmount
+        tax_amount: taxAmount,
+        price_label: null,
       }
       setOrderItems([
         ...orderItems,
@@ -387,12 +395,13 @@ export function CreateOrderModal({
     setOrderItems(updatedItems)
   }
 
-  const handleUpdatePrice = (index: number, price: number) => {
+  const handleUpdatePrice = (index: number, price: number, label: string | null = "Custom") => {
     if (price < 0) return
 
     const updatedItems = [...orderItems]
     const item = updatedItems[index]
     updatedItems[index].unit_price = price
+    updatedItems[index].price_label = label
     updatedItems[index].total_price = item.quantity * price
     updatedItems[index].tax_amount = price * item.quantity * (item.tax_rate / 100)
     setOrderItems(updatedItems)
@@ -448,6 +457,11 @@ export function CreateOrderModal({
       return
     }
 
+    if (paymentOption === 'instant' && (amountPaid < calculateTotal() || !instantPaymentMethod)) {
+      toast.error("An instant sale needs to be paid in full - enter the amount paid and how it was paid.")
+      return
+    }
+
     setLoading(true)
 
     try {
@@ -492,6 +506,7 @@ export function CreateOrderModal({
           product_id: item.product_id,
           quantity: item.quantity,
           unit_price: item.unit_price,
+          price_label: item.price_label || null,
           tax_rate: item.tax_rate,
           tax_amount: item.tax_amount,
           ...(item.variant_id ? { variant_id: item.variant_id } : {}),
@@ -508,6 +523,18 @@ export function CreateOrderModal({
           payment_method: downPaymentMethod,
           amount_paid: downPaymentAmount,
           transaction_id: downPaymentTransactionRef || undefined,
+          status: 'completed',
+        })
+      }
+
+      // Same as the credit-overage down payment - record a real Payment for
+      // an instant sale rather than just writing a number into amount_paid.
+      if (paymentOption === 'instant' && amountPaid > 0 && orderResponse?.order?.id) {
+        await createPayment({
+          order_id: orderResponse.order.id,
+          payment_method: instantPaymentMethod,
+          amount_paid: amountPaid,
+          transaction_id: instantPaymentReference || undefined,
           status: 'completed',
         })
       }
@@ -595,6 +622,8 @@ export function CreateOrderModal({
     setDownPaymentAmount(0)
     setDownPaymentMethod("")
     setDownPaymentTransactionRef("")
+    setInstantPaymentMethod("")
+    setInstantPaymentReference("")
     setDiscount(0)
     setSalesRepId("")
   }
@@ -656,7 +685,7 @@ export function CreateOrderModal({
                           >
                             <div className="font-medium">
                               {getCustomerDisplayName(customer)}
-                              {customer.customer_type === 'company' && customer.name && (
+                              {customer.business_name?.trim() && customer.name && (
                                 <span className="ml-2 text-xs text-gray-400 font-normal">
                                   (Contact: {customer.name})
                                 </span>
@@ -899,6 +928,30 @@ export function CreateOrderModal({
                               <div className="text-sm font-medium text-gray-900 break-words">{item.product_name}</div>
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
+                              {(() => {
+                                const tiers = (product as any)?.price_tiers as { tier_name: string; price: number | string }[] | undefined
+                                if (!tiers || tiers.length === 0) return null
+                                return (
+                                  <Select
+                                    value={item.price_label || ""}
+                                    onValueChange={(label) => {
+                                      const tier = tiers.find(t => t.tier_name === label)
+                                      if (tier) handleUpdatePrice(index, Number(tier.price), label)
+                                    }}
+                                  >
+                                    <SelectTrigger className="h-7 w-24 text-xs mb-1 px-2">
+                                      <SelectValue placeholder="Price..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {tiers.map((t) => (
+                                        <SelectItem key={t.tier_name} value={t.tier_name} className="text-xs">
+                                          {t.tier_name} — {Number(t.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                )
+                              })()}
                               <Input
                                 type="number"
                                 min="0"
@@ -1084,6 +1137,16 @@ export function CreateOrderModal({
                 onDownPaymentTransactionRefChange={setDownPaymentTransactionRef}
               />
             )}
+            {paymentOption === 'instant' && (
+              <InstantPaymentPrompt
+                total={calculateTotal()}
+                amountPaid={amountPaid}
+                paymentMethod={instantPaymentMethod}
+                onPaymentMethodChange={setInstantPaymentMethod}
+                transactionRef={instantPaymentReference}
+                onTransactionRefChange={setInstantPaymentReference}
+              />
+            )}
           </div>
 
           {/* Order Details */}
@@ -1191,7 +1254,8 @@ export function CreateOrderModal({
               disabled={
                 loading ||
                 (paymentOption === 'credit' && !creditTerms?.credit_days) ||
-                (creditOverage > 0 && (!coversOverage(downPaymentAmount, creditOverage) || !downPaymentMethod))
+                (creditOverage > 0 && (!coversOverage(downPaymentAmount, creditOverage) || !downPaymentMethod)) ||
+                (paymentOption === 'instant' && (amountPaid < calculateTotal() || !instantPaymentMethod))
               }
             >
               {loading && <Plus className="mr-2 h-4 w-4 animate-spin" />}

@@ -256,15 +256,13 @@ export default function InvoiceDocumentPage({ params }: { params: Promise<{ id: 
               <p className="text-[10px] font-semibold text-gray-500 mb-0.5">BUYER (BILL TO)</p>
               <div className="text-gray-900">
                 <p className="font-semibold">
-                  {/* Show business_name for company customers, otherwise show name */}
-                  {(customerDetails?.customer_type === 'company' || invoice.customer?.customer_type === 'company') &&
-                   (customerDetails?.business_name || invoice.customer?.business_name)
-                    ? (customerDetails?.business_name || invoice.customer?.business_name)
-                    : (customerDetails?.name || invoice.customer?.name || 'Customer Name')}
+                  {/* Show a captured business name whenever it exists, not
+                      just for customer_type === 'company' - individuals can
+                      fill this in too now. */}
+                  {(customerDetails?.business_name || invoice.customer?.business_name)
+                    || (customerDetails?.name || invoice.customer?.name || 'Customer Name')}
                 </p>
-                {/* Show contact person for company customers */}
-                {(customerDetails?.customer_type === 'company' || invoice.customer?.customer_type === 'company') &&
-                 (customerDetails?.business_name || invoice.customer?.business_name) && (
+                {(customerDetails?.business_name || invoice.customer?.business_name) && (
                   <p>c/o {customerDetails?.name || invoice.customer?.name}</p>
                 )}
                 {(customerDetails?.email || invoice.customer?.email) && (
@@ -277,14 +275,13 @@ export default function InvoiceDocumentPage({ params }: { params: Promise<{ id: 
                   <p>{customerDetails?.address || invoice.customer?.address}</p>
                 )}
                 {(() => {
-                  const isCompany = customerDetails?.customer_type === 'company' || invoice.customer?.customer_type === 'company'
-                  // Company customers: their own registered PIN. Individual
-                  // customers: the business owner/director's PIN captured on
-                  // their credit account, since individuals don't carry a
-                  // company-level PIN themselves.
-                  const pin = isCompany
-                    ? (customerDetails?.pin_number || invoice.customer?.pin_number)
-                    : customerAccount?.directors?.[0]?.pin
+                  // Prefer the customer's own captured KRA PIN (now optional
+                  // for individuals too), falling back to the business owner/
+                  // director's PIN on their credit account when it's the only
+                  // one on record.
+                  const pin = customerDetails?.pin_number
+                    || invoice.customer?.pin_number
+                    || customerAccount?.directors?.[0]?.pin
                   return pin ? <p>PIN: {pin}</p> : null
                 })()}
               </div>

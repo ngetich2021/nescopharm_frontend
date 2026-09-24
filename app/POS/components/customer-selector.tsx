@@ -11,6 +11,7 @@ import type { Customer } from "@/lib/customers"
 import { getCustomers, getCustomerDisplayName } from "@/lib/customers"
 import { usePermissions } from "@/hooks/use-permissions"
 import { CreateCustomerModal } from "@/app/customers/components/CreateCustomerModal"
+import { useCart } from "./pos-interface"
 
 interface CustomerSelectorProps {
   selectedCustomer: Customer | null
@@ -26,6 +27,7 @@ export function CustomerSelector({ selectedCustomer, onCustomerSelect }: Custome
   const { toast } = useToast()
   const { companyId } = useAuth()
   const { hasPermission } = usePermissions()
+  const { bumpActivityVersion } = useCart()
 
   // Check if user has permission to view customers
   const canViewCustomers = hasPermission("can_view_customers")
@@ -207,6 +209,7 @@ export function CustomerSelector({ selectedCustomer, onCustomerSelect }: Custome
             onSuccess={(customer) => {
               if (!customer) return
               setCustomers((prev) => [customer, ...prev])
+              bumpActivityVersion()
               // A Sales Rep's submission is pending review and stays hidden
               // from normal customer pickers/search until approved - don't
               // auto-select it into the current sale, just let the modal's

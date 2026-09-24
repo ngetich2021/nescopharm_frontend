@@ -38,6 +38,7 @@ import {
   CreditCard
 } from "lucide-react";
 import { type Customer, getCustomerDisplayName } from "@/lib/customers";
+import { STATUS_META as APPROVAL_STATUS_META } from "@/app/customers/[id]/application-status-section";
 import { PermissionGuard } from "@/components/PermissionGuard";
 
 interface CustomersTableProps {
@@ -221,12 +222,22 @@ export function CustomersTable({
                     </div>
                   </TableCell>
                   <TableCell>
-                    <div className="flex flex-col">
+                    <div className="flex flex-col gap-1">
                       <span className="font-medium text-gray-900">
                         {getCustomerDisplayName(customer)}
                       </span>
-                      {customer.customer_type === "company" && customer.name && (
+                      {customer.business_name?.trim() && customer.name && (
                         <span className="text-xs text-gray-500">Contact: {customer.name}</span>
+                      )}
+                      {customer.approval_status && customer.approval_status !== "approved" && (
+                        <Badge
+                          variant="outline"
+                          className={`w-fit text-[11px] font-normal ${
+                            APPROVAL_STATUS_META[customer.approval_status]?.className || "bg-gray-100 text-gray-800"
+                          }`}
+                        >
+                          {APPROVAL_STATUS_META[customer.approval_status]?.label || customer.approval_status}
+                        </Badge>
                       )}
                     </div>
                   </TableCell>

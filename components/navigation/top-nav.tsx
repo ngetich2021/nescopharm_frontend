@@ -27,7 +27,7 @@ import { formatDate } from "@/lib/utils"
 
 export function TopNav() {
   const [searchQuery, setSearchQuery] = useState("")
-  const { userProfile, signOut: authSignOut, isLoading: authLoading } = useAuth() // Get signOut and isLoading
+  const { userProfile, signOut: authSignOut, isLoading: authLoading, hasPermission } = useAuth() // Get signOut and isLoading
   const { toast } = useToast()
   const router = useRouter()
   const [isSigningOut, setIsSigningOut] = useState(false)
@@ -149,41 +149,55 @@ export function TopNav() {
       {/* Right Section - Notifications and Reports and Profile */}
       <div className="flex items-center gap-4">
         {/* Reports Dropdown */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild disabled={authLoading || isSigningOut}>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="flex items-center gap-2 text-gray-600 hover:text-primary transition-colors"
-            >
-              <FileText className="h-4 w-4" />
-              <span className="hidden sm:inline">Reports</span>
-              <ChevronDown className="h-3 w-3 opacity-50" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuItem onClick={() => router.push("/reports/inventory")}>
-              <Package className="mr-2 h-4 w-4" />
-              <span>Inventory Reports</span>
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => router.push("/reports/sales")}>
-              <ShoppingCart className="mr-2 h-4 w-4" />
-              <span>Sales Reports</span>
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => router.push("/reports/logistics")}>
-              <Truck className="mr-2 h-4 w-4" />
-              <span>Logistics Reports</span>
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => router.push("/reports/procurement")}>
-              <ClipboardList className="mr-2 h-4 w-4" />
-              <span>Procurement Reports</span>
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => router.push("/reports/customers")}>
-              <Users className="mr-2 h-4 w-4" />
-              <span>CRM Reports</span>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {(hasPermission("can_view_reports_menu") ||
+          hasPermission("can_view_inventory_reports") ||
+          hasPermission("can_view_logistics_reports")) && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild disabled={authLoading || isSigningOut}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="flex items-center gap-2 text-gray-600 hover:text-primary transition-colors"
+              >
+                <FileText className="h-4 w-4" />
+                <span className="hidden sm:inline">Reports</span>
+                <ChevronDown className="h-3 w-3 opacity-50" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              {(hasPermission("can_view_reports_menu") || hasPermission("can_view_inventory_reports")) && (
+                <DropdownMenuItem onClick={() => router.push("/reports/inventory")}>
+                  <Package className="mr-2 h-4 w-4" />
+                  <span>Inventory Reports</span>
+                </DropdownMenuItem>
+              )}
+              {hasPermission("can_view_reports_menu") && (
+                <DropdownMenuItem onClick={() => router.push("/reports/sales")}>
+                  <ShoppingCart className="mr-2 h-4 w-4" />
+                  <span>Sales Reports</span>
+                </DropdownMenuItem>
+              )}
+              {(hasPermission("can_view_reports_menu") || hasPermission("can_view_logistics_reports")) && (
+                <DropdownMenuItem onClick={() => router.push("/reports/logistics")}>
+                  <Truck className="mr-2 h-4 w-4" />
+                  <span>Logistics Reports</span>
+                </DropdownMenuItem>
+              )}
+              {hasPermission("can_view_reports_menu") && (
+                <DropdownMenuItem onClick={() => router.push("/reports/procurement")}>
+                  <ClipboardList className="mr-2 h-4 w-4" />
+                  <span>Procurement Reports</span>
+                </DropdownMenuItem>
+              )}
+              {hasPermission("can_view_reports_menu") && (
+                <DropdownMenuItem onClick={() => router.push("/reports/customers")}>
+                  <Users className="mr-2 h-4 w-4" />
+                  <span>CRM Reports</span>
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
 
         {/* Notifications */}
         <DropdownMenu open={notificationsOpen} onOpenChange={handleOpenNotifications}>

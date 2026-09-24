@@ -51,7 +51,7 @@ export default function LogisticsReportPage() {
   ]
 
   return (
-    <PermissionGuard permissions={["can_view_reports_menu", "can_manage_system", "can_manage_company"]}>
+    <PermissionGuard permissions={["can_view_reports_menu", "can_view_logistics_reports", "can_manage_system", "can_manage_company"]}>
       <div className="space-y-6">
         <div className="flex justify-between items-center">
           <div>

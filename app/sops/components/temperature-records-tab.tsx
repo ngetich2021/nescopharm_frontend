@@ -49,7 +49,10 @@ function currentMonthString() {
 // matches the physical routine (open-of-day vs midday check), and keeps
 // someone from backfilling a reading outside the window it's meant to
 // represent. Only enforced for today's row; past dates can still be edited.
-const MORNING_CUTOFF_HOUR = 10
+// Must match TemperatureLogController::MORNING_CUTOFF_HOUR/AFTERNOON_START_HOUR
+// exactly - these need to meet at the same hour, or there's a dead zone
+// where neither field can be captured (that's the bug this used to have).
+const MORNING_CUTOFF_HOUR = 12
 const AFTERNOON_START_HOUR = 12
 
 function getErrorMessage(error: any): string {
@@ -131,7 +134,11 @@ function LookupField({
 
 export default function TemperatureRecordsTab() {
   const { toast } = useToast()
-  const { user } = useAuth()
+  const { user, hasPermission } = useAuth()
+  // Matches the backend's isGmOrDirector() check for destroy() - deletion is
+  // reserved for GM/Director specifically, not the general can_delete_sops
+  // permission other temperature-log actions accept.
+  const canDeleteLogs = hasPermission("can_manage_company")
 
   const [logs, setLogs] = useState<TemperatureLog[]>([])
   const [thermometers, setThermometers] = useState<string[]>([])
@@ -526,18 +533,20 @@ export default function TemperatureRecordsTab() {
                         {log.remarks || (log.is_out_of_range ? "" : "-")}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleDelete(log)}
-                          disabled={deletingId === log.id}
-                        >
-                          {deletingId === log.id ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-4 w-4 text-red-500" />
-                          )}
-                        </Button>
+                        {canDeleteLogs && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleDelete(log)}
+                            disabled={deletingId === log.id}
+                          >
+                            {deletingId === log.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4 text-red-500" />
+                            )}
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))

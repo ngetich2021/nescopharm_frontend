@@ -1,35 +1,77 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { Quote } from "@/lib/quotes"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { AlertCircle, FileText, User, Calendar, DollarSign, Package, CheckCircle2, XCircle } from "lucide-react"
-import { formatCurrency } from "@/lib/utils"
-import { getCustomerDisplayName } from "@/lib/customers"
+import { AlertCircle, FileText, User, Calendar, DollarSign, Package, CheckCircle2, XCircle, CreditCard, Wallet } from "lucide-react"
+import { formatCurrency, cn } from "@/lib/utils"
+import { getCustomerDisplayName, fetchCustomerCreditTerms, type CustomerCreditTerms } from "@/lib/customers"
 
 interface ConvertQuoteDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   quote: Quote | null
-  onConfirm: () => void
+  onConfirm: (paymentOption: "instant" | "credit") => void
   isConverting: boolean
 }
 
-export function ConvertQuoteDialog({ 
-  open, 
-  onOpenChange, 
-  quote, 
-  onConfirm, 
-  isConverting 
+export function ConvertQuoteDialog({
+  open,
+  onOpenChange,
+  quote,
+  onConfirm,
+  isConverting
 }: ConvertQuoteDialogProps) {
+  const [creditTerms, setCreditTerms] = useState<CustomerCreditTerms | null>(null)
+  const [isLoadingCreditTerms, setIsLoadingCreditTerms] = useState(false)
+  const [paymentOption, setPaymentOption] = useState<"instant" | "credit">("credit")
+
+  const orderTotal = quote ? Number(quote.final_amount || quote.total_amount || 0) : 0
+
+  useEffect(() => {
+    if (!open || !quote?.customer_id) {
+      setCreditTerms(null)
+      return
+    }
+    let cancelled = false
+    setIsLoadingCreditTerms(true)
+    fetchCustomerCreditTerms(quote.customer_id)
+      .then((terms) => {
+        if (cancelled) return
+        setCreditTerms(terms)
+        // Default to whatever the customer is actually set up for, but if
+        // they're a credit customer with too little room left, default to
+        // instant instead of leaving them stuck on an option that will 422.
+        const insufficientCredit = terms.available_credit !== null && orderTotal > Number(terms.available_credit)
+        setPaymentOption(terms.payment_method === "credit" && !insufficientCredit ? "credit" : "instant")
+      })
+      .catch(() => {
+        if (!cancelled) setCreditTerms(null)
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingCreditTerms(false)
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, quote?.customer_id])
+
   if (!quote) return null
 
   // Check if quote can be converted
-  const canConvert = !quote.converted_to_order_id && 
-                     !quote.requires_approval && 
-                     quote.status !== "rejected" && 
+  const canConvert = !quote.converted_to_order_id &&
+                     !quote.requires_approval &&
+                     quote.status !== "rejected" &&
                      quote.status !== "expired"
+
+  const availableCredit = creditTerms?.available_credit !== null && creditTerms?.available_credit !== undefined
+    ? Number(creditTerms.available_credit)
+    : null
+  const insufficientCredit = availableCredit !== null && orderTotal > availableCredit
+  const isCreditCustomer = creditTerms?.payment_method === "credit"
 
   const getStatusBadge = (status: string) => {
     const statusLower = status.toLowerCase()
@@ -187,6 +229,62 @@ export function ConvertQuoteDialog({
             )}
           </div>
 
+          {/* Payment Method - a customer's remaining credit isn't unlimited,
+              so this has to be chosen explicitly rather than always silently
+              going through on credit regardless of how much room is left. */}
+          {canConvert && (
+            <div className="rounded-lg border bg-white p-4 space-y-3">
+              <h3 className="font-semibold text-sm text-gray-700 uppercase tracking-wide">Payment Method</h3>
+              {isLoadingCreditTerms ? (
+                <p className="text-sm text-gray-500">Checking customer's credit standing…</p>
+              ) : (
+                <>
+                  {isCreditCustomer && (
+                    <div className={cn(
+                      "text-sm rounded-md px-3 py-2",
+                      insufficientCredit ? "bg-red-50 text-red-800" : "bg-gray-50 text-gray-700"
+                    )}>
+                      Available credit: <span className="font-semibold">
+                        {availableCredit !== null ? formatCurrency(availableCredit) : "—"}
+                      </span>
+                      {insufficientCredit && (
+                        <span> — not enough to cover this order ({formatCurrency(orderTotal)}). Choose "Pay Instant" below.</span>
+                      )}
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentOption("credit")}
+                      disabled={insufficientCredit}
+                      className={cn(
+                        "flex flex-col items-center gap-1.5 rounded-lg border-2 p-3 text-sm transition-colors",
+                        paymentOption === "credit" ? "border-primary bg-primary/5" : "border-gray-200",
+                        insufficientCredit && "opacity-40 cursor-not-allowed"
+                      )}
+                    >
+                      <CreditCard className="h-5 w-5" />
+                      <span className="font-medium">On Credit</span>
+                      <span className="text-xs text-gray-500">Customer's registered terms</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentOption("instant")}
+                      className={cn(
+                        "flex flex-col items-center gap-1.5 rounded-lg border-2 p-3 text-sm transition-colors",
+                        paymentOption === "instant" ? "border-primary bg-primary/5" : "border-gray-200"
+                      )}
+                    >
+                      <Wallet className="h-5 w-5" />
+                      <span className="font-medium">Pay Instant</span>
+                      <span className="text-xs text-gray-500">Cash / due on receipt</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           {/* Info message */}
           {canConvert && (
             <div className="flex gap-3 rounded-lg bg-blue-50 p-3 text-sm">
@@ -214,7 +312,7 @@ export function ConvertQuoteDialog({
           </Button>
           <Button
             type="button"
-            onClick={onConfirm}
+            onClick={() => onConfirm(paymentOption)}
             disabled={isConverting || !canConvert}
             className={!canConvert ? "opacity-50 cursor-not-allowed" : ""}
           >

@@ -12,14 +12,21 @@ import { useToast } from "@/hooks/use-toast";
 import {
   createEmployeePortalLeaveRequest,
   createEmployeePortalSalaryAdvance,
+  createEmployeePortalDailyReport,
   getEmployeePortalLeaveRequests,
   getEmployeePortalProfile,
   getEmployeePortalSalaryAdvances,
+  getEmployeePortalDailyReports,
 } from "@/lib/employee-portal";
+import { getLeaveRequests, approveLeaveRequest, updateLeaveRequest } from "@/lib/leave";
+import { getSalaryAdvances, approveSalaryAdvance, updateSalaryAdvance } from "@/lib/salary-advance";
+import { getDailyReports, approveDailyReport, rejectDailyReport, isSunday, DEFAULT_DAILY_REPORT_ENTRIES } from "@/lib/daily-reports";
+import { useAuth } from "@/lib/auth-context";
 import type { Employee } from "@/lib/employees";
 import type { LeaveRequest } from "@/lib/leave";
 import type { SalaryAdvanceRequest } from "@/lib/salary-advance";
-import { Briefcase, CalendarDays, CreditCard, UserRound, FileBarChart, ShieldCheck } from "lucide-react";
+import type { DailyWorkReport, DailyWorkReportEntry } from "@/lib/daily-reports";
+import { Briefcase, CalendarDays, CreditCard, UserRound, FileBarChart, ShieldCheck, CheckCircle2, XCircle, Plus, Trash2 } from "lucide-react";
 
 const STATUS_STYLES: Record<string, string> = {
   approved: "bg-green-100 text-green-800",
@@ -49,9 +56,18 @@ function getStatusClass(status?: string | null) {
 
 export default function EmployeePortalPage() {
   const { toast } = useToast();
+  const { hasPermission } = useAuth();
+  const canApproveLeave = hasPermission("can_approve_leave");
+  const canApproveSalary = hasPermission("can_approve_salary_changes");
+  const canApproveDailyReports = hasPermission("can_approve_daily_reports");
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
   const [salaryAdvances, setSalaryAdvances] = useState<SalaryAdvanceRequest[]>([]);
+  const [dailyReports, setDailyReports] = useState<DailyWorkReport[]>([]);
+  const [pendingLeaveApprovals, setPendingLeaveApprovals] = useState<LeaveRequest[]>([]);
+  const [pendingAdvanceApprovals, setPendingAdvanceApprovals] = useState<SalaryAdvanceRequest[]>([]);
+  const [pendingDailyReportApprovals, setPendingDailyReportApprovals] = useState<DailyWorkReport[]>([]);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [leaveForm, setLeaveForm] = useState({
     leave_type: "annual",
@@ -64,18 +80,34 @@ export default function EmployeePortalPage() {
     request_date: "",
     reason: "",
   });
+  const [dailyReportForm, setDailyReportForm] = useState<{
+    report_date: string;
+    entries: DailyWorkReportEntry[];
+    key_achievements: string;
+    pending_work: string;
+  }>({
+    report_date: "",
+    entries: DEFAULT_DAILY_REPORT_ENTRIES.map((entry) => ({ ...entry })),
+    key_achievements: "",
+    pending_work: "",
+  });
+  const [submittingLeave, setSubmittingLeave] = useState(false);
+  const [submittingAdvance, setSubmittingAdvance] = useState(false);
+  const [submittingDailyReport, setSubmittingDailyReport] = useState(false);
 
   const loadData = async () => {
     try {
       setLoading(true);
-      const [profile, leaveData, advanceData] = await Promise.all([
+      const [profile, leaveData, advanceData, dailyReportData] = await Promise.all([
         getEmployeePortalProfile(),
         getEmployeePortalLeaveRequests(),
         getEmployeePortalSalaryAdvances(),
+        getEmployeePortalDailyReports(),
       ]);
       setEmployee(profile);
       setLeaveRequests(leaveData);
       setSalaryAdvances(advanceData);
+      setDailyReports(dailyReportData);
     } catch (error: any) {
       toast({
         title: "Employee Portal",
@@ -87,12 +119,175 @@ export default function EmployeePortalPage() {
     }
   };
 
+  // Separate from the self-service data above: what THIS user (as an
+  // approver - GM/Director, or explicitly granted approval rights) needs to
+  // review for other employees. Fetched independently so an ordinary
+  // employee without approval rights never triggers this (and never sees a
+  // needless 403) - the section itself is only rendered when eligible too.
+  const loadPendingApprovals = async () => {
+    try {
+      const [leaveData, advanceData, dailyReportData] = await Promise.all([
+        canApproveLeave ? getLeaveRequests({ status: "pending" }) : Promise.resolve([]),
+        canApproveSalary ? getSalaryAdvances({ status: "pending" }) : Promise.resolve([]),
+        canApproveDailyReports ? getDailyReports({ status: "pending" }) : Promise.resolve([]),
+      ]);
+      setPendingLeaveApprovals(leaveData);
+      setPendingAdvanceApprovals(advanceData);
+      setPendingDailyReportApprovals(dailyReportData);
+    } catch (error: any) {
+      // Non-fatal - the self-service portal above still works either way.
+      console.error("Failed to load pending approvals", error);
+    }
+  };
+
   useEffect(() => {
     loadData();
+    loadPendingApprovals();
   }, []);
+
+  const handleApproveLeave = async (id: string) => {
+    setApprovingId(id);
+    try {
+      await approveLeaveRequest(id);
+      toast({ title: "Success", description: "Leave request approved." });
+      loadPendingApprovals();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message || "Failed to approve leave request.", variant: "destructive" });
+    } finally {
+      setApprovingId(null);
+    }
+  };
+
+  const handleRejectLeave = async (id: string) => {
+    setApprovingId(id);
+    try {
+      await updateLeaveRequest(id, { status: "rejected" });
+      toast({ title: "Leave request rejected" });
+      loadPendingApprovals();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message || "Failed to reject leave request.", variant: "destructive" });
+    } finally {
+      setApprovingId(null);
+    }
+  };
+
+  const handleApproveAdvance = async (id: string) => {
+    setApprovingId(id);
+    try {
+      await approveSalaryAdvance(id);
+      toast({ title: "Success", description: "Salary advance approved." });
+      loadPendingApprovals();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message || "Failed to approve salary advance.", variant: "destructive" });
+    } finally {
+      setApprovingId(null);
+    }
+  };
+
+  const handleRejectAdvance = async (id: string) => {
+    setApprovingId(id);
+    try {
+      await updateSalaryAdvance(id, { status: "rejected" });
+      toast({ title: "Salary advance rejected" });
+      loadPendingApprovals();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message || "Failed to reject salary advance.", variant: "destructive" });
+    } finally {
+      setApprovingId(null);
+    }
+  };
+
+  const handleApproveDailyReport = async (id: string) => {
+    setApprovingId(id);
+    try {
+      await approveDailyReport(id);
+      toast({ title: "Success", description: "Daily work report approved." });
+      loadPendingApprovals();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message || "Failed to approve daily work report.", variant: "destructive" });
+    } finally {
+      setApprovingId(null);
+    }
+  };
+
+  const handleRejectDailyReport = async (id: string) => {
+    setApprovingId(id);
+    try {
+      await rejectDailyReport(id);
+      toast({ title: "Daily work report rejected" });
+      loadPendingApprovals();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message || "Failed to reject daily work report.", variant: "destructive" });
+    } finally {
+      setApprovingId(null);
+    }
+  };
+
+  const updateDailyReportEntry = (index: number, field: keyof DailyWorkReportEntry, value: string) => {
+    setDailyReportForm((prev) => ({
+      ...prev,
+      entries: prev.entries.map((entry, i) => (i === index ? { ...entry, [field]: value } : entry)),
+    }));
+  };
+
+  const addDailyReportEntry = () => {
+    setDailyReportForm((prev) => ({
+      ...prev,
+      entries: [...prev.entries, { time: "", activity: "", remarks: "" }],
+    }));
+  };
+
+  const removeDailyReportEntry = (index: number) => {
+    setDailyReportForm((prev) => ({
+      ...prev,
+      entries: prev.entries.filter((_, i) => i !== index),
+    }));
+  };
+
+  const handleDailyReportSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submittingDailyReport) return;
+    if (!dailyReportForm.report_date) {
+      toast({ title: "Error", description: "Please select a report date.", variant: "destructive" });
+      return;
+    }
+    if (isSunday(dailyReportForm.report_date)) {
+      toast({
+        title: "Sundays are skipped",
+        description: "Daily work reports are not required on Sundays. Please pick another date.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setSubmittingDailyReport(true);
+    try {
+      await createEmployeePortalDailyReport({
+        report_date: dailyReportForm.report_date,
+        entries: dailyReportForm.entries,
+        key_achievements: dailyReportForm.key_achievements,
+        pending_work: dailyReportForm.pending_work,
+      });
+      toast({ title: "Success", description: "Daily work report submitted." });
+      setDailyReportForm({
+        report_date: "",
+        entries: DEFAULT_DAILY_REPORT_ENTRIES.map((entry) => ({ ...entry })),
+        key_achievements: "",
+        pending_work: "",
+      });
+      loadData();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message || "Failed to submit daily work report.", variant: "destructive" });
+    } finally {
+      setSubmittingDailyReport(false);
+    }
+  };
 
   const handleLeaveSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Guard against double-submission (double-click, slow network + repeat
+    // click, etc.) creating multiple identical requests.
+    if (submittingLeave) return;
+    setSubmittingLeave(true);
     try {
       await createEmployeePortalLeaveRequest(leaveForm);
       toast({ title: "Success", description: "Leave request submitted." });
@@ -100,11 +295,15 @@ export default function EmployeePortalPage() {
       loadData();
     } catch (error: any) {
       toast({ title: "Error", description: error.message || "Failed to submit leave request.", variant: "destructive" });
+    } finally {
+      setSubmittingLeave(false);
     }
   };
 
   const handleAdvanceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingAdvance) return;
+    setSubmittingAdvance(true);
     try {
       await createEmployeePortalSalaryAdvance({
         amount: Number(advanceForm.amount),
@@ -116,6 +315,8 @@ export default function EmployeePortalPage() {
       loadData();
     } catch (error: any) {
       toast({ title: "Error", description: error.message || "Failed to submit salary advance request.", variant: "destructive" });
+    } finally {
+      setSubmittingAdvance(false);
     }
   };
 
@@ -179,6 +380,116 @@ export default function EmployeePortalPage() {
         </div>
       </div>
 
+      {(canApproveLeave || canApproveSalary || canApproveDailyReports) && (
+        <Card className="shadow-sm border-amber-200">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              Pending Approvals
+              {(pendingLeaveApprovals.length + pendingAdvanceApprovals.length + pendingDailyReportApprovals.length) > 0 && (
+                <Badge className="bg-amber-100 text-amber-800">
+                  {pendingLeaveApprovals.length + pendingAdvanceApprovals.length + pendingDailyReportApprovals.length}
+                </Badge>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {pendingLeaveApprovals.length === 0 && pendingAdvanceApprovals.length === 0 && pendingDailyReportApprovals.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nothing waiting on your review right now.</p>
+            ) : (
+              <>
+                {canApproveLeave && pendingLeaveApprovals.map((req) => (
+                  <div key={req.id} className="flex items-center justify-between rounded-xl border p-3">
+                    <div>
+                      <p className="text-sm font-semibold">{req.employee} - {req.leaveType} leave</p>
+                      <p className="text-xs text-muted-foreground">{req.startDate} to {req.endDate}</p>
+                      {req.reason && <p className="text-xs text-muted-foreground mt-1">{req.reason}</p>}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-green-700 border-green-300 hover:bg-green-50"
+                        disabled={approvingId === req.id}
+                        onClick={() => handleApproveLeave(req.id)}
+                      >
+                        <CheckCircle2 className="h-4 w-4 mr-1" /> Approve
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-red-700 border-red-300 hover:bg-red-50"
+                        disabled={approvingId === req.id}
+                        onClick={() => handleRejectLeave(req.id)}
+                      >
+                        <XCircle className="h-4 w-4 mr-1" /> Reject
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+                {canApproveSalary && pendingAdvanceApprovals.map((adv) => (
+                  <div key={adv.id} className="flex items-center justify-between rounded-xl border p-3">
+                    <div>
+                      <p className="text-sm font-semibold">{adv.employee} - {formatMoney(adv.amount)}</p>
+                      <p className="text-xs text-muted-foreground">Requested {adv.requestDate}</p>
+                      {adv.reason && <p className="text-xs text-muted-foreground mt-1">{adv.reason}</p>}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-green-700 border-green-300 hover:bg-green-50"
+                        disabled={approvingId === adv.id}
+                        onClick={() => handleApproveAdvance(adv.id)}
+                      >
+                        <CheckCircle2 className="h-4 w-4 mr-1" /> Approve
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-red-700 border-red-300 hover:bg-red-50"
+                        disabled={approvingId === adv.id}
+                        onClick={() => handleRejectAdvance(adv.id)}
+                      >
+                        <XCircle className="h-4 w-4 mr-1" /> Reject
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+                {canApproveDailyReports && pendingDailyReportApprovals.map((report) => (
+                  <div key={report.id} className="flex items-center justify-between rounded-xl border p-3">
+                    <div>
+                      <p className="text-sm font-semibold">{report.employee} - Daily Work Report</p>
+                      <p className="text-xs text-muted-foreground">{report.reportDate}</p>
+                      {report.keyAchievements && <p className="text-xs text-muted-foreground mt-1">{report.keyAchievements}</p>}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-green-700 border-green-300 hover:bg-green-50"
+                        disabled={approvingId === report.id}
+                        onClick={() => handleApproveDailyReport(report.id)}
+                      >
+                        <CheckCircle2 className="h-4 w-4 mr-1" /> Approve
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-red-700 border-red-300 hover:bg-red-50"
+                        disabled={approvingId === report.id}
+                        onClick={() => handleRejectDailyReport(report.id)}
+                      >
+                        <XCircle className="h-4 w-4 mr-1" /> Reject
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
         <Card className="shadow-sm">
           <CardHeader>
@@ -231,6 +542,15 @@ export default function EmployeePortalPage() {
                   : "No salary advance approver has been assigned yet."}
               </p>
             </div>
+            <div className="rounded-2xl border p-4">
+              <div className="flex items-center gap-2">
+                <FileBarChart className="h-4 w-4 text-emerald-700" />
+                <p className="text-sm font-semibold">Daily Report Approver</p>
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Routed automatically to the GM, or the Managing Director if you are the GM.
+              </p>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -273,7 +593,9 @@ export default function EmployeePortalPage() {
                   <Label>Reason</Label>
                   <Textarea value={leaveForm.reason} onChange={(e) => setLeaveForm({ ...leaveForm, reason: e.target.value })} rows={5} />
                 </div>
-                <Button type="submit">Submit Leave Request</Button>
+                <Button type="submit" disabled={submittingLeave}>
+                  {submittingLeave ? "Submitting..." : "Submit Leave Request"}
+                </Button>
               </form>
             </CardContent>
           </Card>
@@ -331,7 +653,9 @@ export default function EmployeePortalPage() {
                   <Label>Reason</Label>
                   <Textarea value={advanceForm.reason} onChange={(e) => setAdvanceForm({ ...advanceForm, reason: e.target.value })} rows={5} />
                 </div>
-                <Button type="submit">Submit Salary Advance Request</Button>
+                <Button type="submit" disabled={submittingAdvance}>
+                  {submittingAdvance ? "Submitting..." : "Submit Salary Advance Request"}
+                </Button>
               </form>
             </CardContent>
           </Card>
@@ -363,12 +687,128 @@ export default function EmployeePortalPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="daily-reports">
+        <TabsContent value="daily-reports" className="grid gap-4 xl:grid-cols-[1.3fr_1fr]">
           <Card className="shadow-sm">
-            <CardContent className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-              <FileBarChart className="h-10 w-10 text-muted-foreground" />
-              <p className="text-lg font-semibold">Daily Reports</p>
-              <p className="text-sm text-muted-foreground">coming soon ...</p>
+            <CardHeader>
+              <CardTitle>Submit Daily Work Report</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleDailyReportSubmit} className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Date</Label>
+                  <Input
+                    type="date"
+                    className="max-w-xs"
+                    value={dailyReportForm.report_date}
+                    onChange={(e) => setDailyReportForm({ ...dailyReportForm, report_date: e.target.value })}
+                  />
+                  {dailyReportForm.report_date && isSunday(dailyReportForm.report_date) && (
+                    <p className="text-xs text-red-600">Sundays are skipped - no report is required that day. Please pick another date.</p>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Work / Activity Log</Label>
+                  <div className="space-y-3">
+                    {dailyReportForm.entries.map((entry, index) => (
+                      <div key={index} className="grid gap-2 rounded-xl border p-3 md:grid-cols-[0.9fr_1.3fr_1fr_auto]">
+                        <Input
+                          placeholder="Time (e.g. 8:30 AM - 10:30 AM)"
+                          value={entry.time}
+                          onChange={(e) => updateDailyReportEntry(index, "time", e.target.value)}
+                        />
+                        <Input
+                          placeholder="Work / Activity Completed"
+                          value={entry.activity}
+                          onChange={(e) => updateDailyReportEntry(index, "activity", e.target.value)}
+                        />
+                        <Input
+                          placeholder="Remarks"
+                          value={entry.remarks}
+                          onChange={(e) => updateDailyReportEntry(index, "remarks", e.target.value)}
+                        />
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="text-red-600 hover:bg-red-50"
+                          onClick={() => removeDailyReportEntry(index)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                  <Button type="button" size="sm" variant="outline" onClick={addDailyReportEntry}>
+                    <Plus className="h-4 w-4 mr-1" /> Add Time Block
+                  </Button>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Today&apos;s Key Achievements</Label>
+                    <Textarea
+                      rows={4}
+                      value={dailyReportForm.key_achievements}
+                      onChange={(e) => setDailyReportForm({ ...dailyReportForm, key_achievements: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Pending Work / Challenges</Label>
+                    <Textarea
+                      rows={4}
+                      value={dailyReportForm.pending_work}
+                      onChange={(e) => setDailyReportForm({ ...dailyReportForm, pending_work: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <Button type="submit" disabled={submittingDailyReport}>
+                  {submittingDailyReport ? "Submitting..." : "Submit Daily Work Report"}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+
+          <Card className="shadow-sm">
+            <CardHeader>
+              <CardTitle>Recent Daily Reports</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {dailyReports.length === 0 ? (
+                <div className="rounded-2xl border border-dashed p-6 text-sm text-muted-foreground">
+                  No daily work reports yet. Submitted reports will show here.
+                </div>
+              ) : (
+                dailyReports.map((report) => (
+                  <div key={report.id} className="rounded-2xl border p-4">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="space-y-1">
+                        <p className="text-sm font-semibold">{report.reportDate}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {report.approverRole ? `Approver: ${report.approverRole}` : "Self-certified"}
+                        </p>
+                      </div>
+                      <Badge className={getStatusClass(report.status)}>{formatStatus(report.status)}</Badge>
+                    </div>
+                    {report.keyAchievements && (
+                      <p className="mt-3 text-sm text-muted-foreground">
+                        <span className="font-medium text-foreground">Achievements: </span>
+                        {report.keyAchievements}
+                      </p>
+                    )}
+                    {report.pendingWork && (
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        <span className="font-medium text-foreground">Pending: </span>
+                        {report.pendingWork}
+                      </p>
+                    )}
+                    {report.status === "rejected" && report.rejectionReason && (
+                      <p className="mt-1 text-sm text-red-600">Reason: {report.rejectionReason}</p>
+                    )}
+                  </div>
+                ))
+              )}
             </CardContent>
           </Card>
         </TabsContent>

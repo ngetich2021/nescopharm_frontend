@@ -126,9 +126,9 @@ function Sidebar() {
     { name: "Purchase Orders", href: "/purchase-orders", icon: Package, permission: "can_view_purchase_orders_menu" },
     { name: "Expenses", href: "/expenses", icon: ReceiptText, permission: "can_view_expenses_menu" },
     { name: "Finance", href: "/finance", icon: Calculator, permission: "can_view_finance_menu" },
-    { name: "SOPs", href: "/sops", icon: ClipboardList, permission: "can_view_finance_menu" },
+    { name: "SOPs", href: "/sops", icon: ClipboardList, permission: "can_view_sops_menu" },
     { name: "HR & Payroll", href: "/hr", icon: UserCheck, permission: "can_view_employees_menu" },
-    { name: "Employee Portal", href: "/employee-portal", icon: BriefcaseBusiness, permission: "can_view_dashboard_menu" },
+    { name: "Employee Portal", href: "/employee-portal", icon: BriefcaseBusiness, permission: "can_view_employee_portal_menu" },
     { name: "POS", href: "/POS", icon: Store, permission: "can_view_pos_menu" },
     // { name: "Chat", href: "/chat", icon: MessageSquare, permission: "can_view_chat_menu" },
     { name: "Users", href: "/users", icon: UserCheck, permission: "can_manage_users_and_roles" },
@@ -161,9 +161,9 @@ function Sidebar() {
   const reportingDropdownItems = [
     { name: "eTIMS Compliance", href: "/etims/reports", icon: ShieldCheck, permission: "can_view_reports_menu" },
     { name: "eTIMS Supplier Receipts", href: "/etims/supplier-receipts", icon: ReceiptText, permission: "can_view_reports_menu" },
-    { name: "Inventory Reports", href: "/reports/inventory", icon: Package, permission: "can_view_reports_menu" },
+    { name: "Inventory Reports", href: "/reports/inventory", icon: Package, permission: "can_view_reports_menu", extraPermission: "can_view_inventory_reports" },
     { name: "Sales Reports", href: "/reports/sales", icon: ShoppingCart, permission: "can_view_reports_menu" },
-    { name: "Logistics Reports", href: "/reports/logistics", icon: Truck, permission: "can_view_reports_menu" },
+    { name: "Logistics Reports", href: "/reports/logistics", icon: Truck, permission: "can_view_reports_menu", extraPermission: "can_view_logistics_reports" },
     { name: "Procurement Reports", href: "/reports/procurement", icon: ClipboardList, permission: "can_view_reports_menu" },
     { name: "CRM Reports", href: "/reports/customers", icon: Users, permission: "can_view_reports_menu" },
   ]
@@ -217,32 +217,32 @@ function Sidebar() {
       <TooltipProvider delayDuration={0}>
       <nav className="flex-1 overflow-y-auto py-4 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
         <ul className="space-y-1 px-3">
-          {/* Dashboard */}
-          {hasPermission(userProfile as any, "can_view_dashboard_menu") && (
-            <li>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Link
-                    href="/dashboard"
-                    className={cn(
-                      "group flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 font-medium text-sm",
-                      isActive("/dashboard") 
-                        ? "bg-gradient-to-r from-[#E30040] to-[#ff1a5c] text-white shadow-lg shadow-[#E30040]/25" 
-                        : "text-slate-100 hover:bg-slate-800/50",
-                    )}
-                  >
-                    <LayoutDashboard size={20} className={cn("transition-transform duration-200", isActive("/dashboard") ? "" : "group-hover:scale-110")} />
-                    {!collapsed && <span>Dashboard</span>}
-                  </Link>
-                </TooltipTrigger>
-                {collapsed && (
-                  <TooltipContent side="right" className="bg-slate-800 text-white border-slate-700">
-                    Dashboard
-                  </TooltipContent>
-                )}
-              </Tooltip>
-            </li>
-          )}
+          {/* Dashboard - everyone can see it; the page itself shows the full
+              view only to users with can_view_dashboard_menu, and just a
+              greeting to everyone else. */}
+          <li>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Link
+                  href="/dashboard"
+                  className={cn(
+                    "group flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 font-medium text-sm",
+                    isActive("/dashboard")
+                      ? "bg-gradient-to-r from-[#E30040] to-[#ff1a5c] text-white shadow-lg shadow-[#E30040]/25"
+                      : "text-slate-100 hover:bg-slate-800/50",
+                  )}
+                >
+                  <LayoutDashboard size={20} className={cn("transition-transform duration-200", isActive("/dashboard") ? "" : "group-hover:scale-110")} />
+                  {!collapsed && <span>Dashboard</span>}
+                </Link>
+              </TooltipTrigger>
+              {collapsed && (
+                <TooltipContent side="right" className="bg-slate-800 text-white border-slate-700">
+                  Dashboard
+                </TooltipContent>
+              )}
+            </Tooltip>
+          </li>
           
           {/* CRM Dropdown */}
           {(hasPermission(userProfile as any, "can_view_customers_menu") || 
@@ -521,8 +521,10 @@ function Sidebar() {
             )}
 
           {/* Reporting Dropdown - Moved before Settings */}
-          {(hasPermission(userProfile as any, "can_view_reports_menu") || 
-            hasPermission(userProfile as any, "can_manage_system") || 
+          {(hasPermission(userProfile as any, "can_view_reports_menu") ||
+            hasPermission(userProfile as any, "can_view_inventory_reports") ||
+            hasPermission(userProfile as any, "can_view_logistics_reports") ||
+            hasPermission(userProfile as any, "can_manage_system") ||
             hasPermission(userProfile as any, "can_manage_company")) && (
             <li>
               <div className="relative">
@@ -559,8 +561,9 @@ function Sidebar() {
                 {!collapsed && reportingDropdownOpen && (
                   <ul className="mt-2 ml-4 space-y-1 border-l border-slate-700/50 pl-3">
                     {reportingDropdownItems.map((subItem) =>
-                      (hasPermission(userProfile as any, subItem.permission) || 
-                        hasPermission(userProfile as any, "can_manage_system") || 
+                      (hasPermission(userProfile as any, subItem.permission) ||
+                        (subItem.extraPermission && hasPermission(userProfile as any, subItem.extraPermission)) ||
+                        hasPermission(userProfile as any, "can_manage_system") ||
                         hasPermission(userProfile as any, "can_manage_company")) ? (
                         <li key={subItem.name}>
                           <Link

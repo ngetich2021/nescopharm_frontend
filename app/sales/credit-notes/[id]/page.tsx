@@ -67,7 +67,10 @@ import {
 } from "lucide-react"
 
 function getCustomerName(creditNote: CreditNote): string {
-  if (creditNote.customer?.customer_type === "company" && creditNote.customer?.business_name) {
+  // Business name is optional for individuals too now, so show it whenever
+  // it's been captured rather than gating on customer_type === "company" -
+  // otherwise a filled-in field silently never appears anywhere.
+  if (creditNote.customer?.business_name) {
     return creditNote.customer.business_name
   }
 

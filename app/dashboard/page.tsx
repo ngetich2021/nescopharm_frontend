@@ -8,7 +8,6 @@ import {
   fetchInventoryAnalytics,
   DashboardOverview,
 } from "@/lib/dashboards";
-import { PermissionGuard } from "@/components/PermissionGuard";
 import { InteractiveChartCard } from "./components/interactive-chart-card";
 import { QuickActionsGrid } from "./components/quick-action-cards";
 import { DashboardLoadingState } from "./components/loading-skeletons";
@@ -191,7 +190,10 @@ function KPIPill({ label, value, icon: Icon, variant = "default" }: { label: str
 }
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
+  // Everyone can land on /dashboard - only those with the permission get the
+  // full data view; everyone else just gets greeted (see the fallback below).
+  const canViewFullDashboard = hasPermission("can_view_dashboard_menu");
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<string>("last_30_days");
@@ -201,27 +203,55 @@ export default function DashboardPage() {
   const [inventoryAnalytics, setInventoryAnalytics] = useState<any>(null);
 
   useEffect(() => {
+    if (!canViewFullDashboard) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
     async function loadData() {
       setLoading(true);
       try {
         const overviewData = await fetchDashboardOverview();
+        if (cancelled) return;
         setOverview(overviewData);
 
         // Load sequentially rather than in parallel: the dev backend handles one
         // request at a time, so firing these together just queues them behind each
         // other anyway, and risks the browser giving up on the later ones.
-        setSalesAnalytics(await fetchSalesAnalytics({ period, group_by: "day" }));
-        setFinancialAnalytics(await fetchFinancialAnalytics({ period, group_by: "month" }));
-        setCustomerAnalytics(await fetchCustomerAnalytics({ period, group_by: "month" }));
-        setInventoryAnalytics(await fetchInventoryAnalytics({ period, group_by: "month" }));
+        const sales = await fetchSalesAnalytics({ period, group_by: "day" });
+        if (cancelled) return;
+        setSalesAnalytics(sales);
+
+        const financial = await fetchFinancialAnalytics({ period, group_by: "month" });
+        if (cancelled) return;
+        setFinancialAnalytics(financial);
+
+        const customer = await fetchCustomerAnalytics({ period, group_by: "month" });
+        if (cancelled) return;
+        setCustomerAnalytics(customer);
+
+        const inventory = await fetchInventoryAnalytics({ period, group_by: "month" });
+        if (cancelled) return;
+        setInventoryAnalytics(inventory);
       } catch (error) {
-        console.error("Error loading dashboard data:", error);
+        // Logging out (or a session expiring) mid-chain clears the auth token,
+        // so whichever fetch is next in line throws "not logged in" - that's
+        // an expected side effect of the session ending, not a real failure.
+        const sessionEnded = error instanceof Error && error.message.includes("not logged in");
+        if (!cancelled && !sessionEnded) {
+          console.error("Error loading dashboard data:", error);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
     loadData();
-  }, [period]);
+    return () => {
+      cancelled = true;
+    };
+  }, [period, canViewFullDashboard]);
 
   const greeting = () => {
     const hour = new Date().getHours();
@@ -241,8 +271,7 @@ export default function DashboardPage() {
   );
 
   return (
-    <PermissionGuard permissions={["can_view_dashboard_menu", "can_manage_system", "can_manage_company"]}>
-      <div className="min-h-screen">
+    <div className="min-h-screen">
         <div className="container mx-auto py-6 px-4 sm:px-6 max-w-[1400px]">
 
           {/* ── Header ── */}
@@ -252,28 +281,39 @@ export default function DashboardPage() {
                 {greeting()}, {user?.first_name || "there"}
               </h1>
               <p className="text-muted-foreground text-sm mt-0.5">
-                Your business at a glance
+                {canViewFullDashboard ? "Your business at a glance" : "Welcome to CitiMax ERP"}
               </p>
             </div>
-            <Select value={period} onValueChange={setPeriod}>
-              <SelectTrigger className="w-[170px] h-9 text-sm">
-                <CalendarDays className="h-3.5 w-3.5 mr-2 text-muted-foreground" />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="today">Today</SelectItem>
-                <SelectItem value="yesterday">Yesterday</SelectItem>
-                <SelectItem value="last_7_days">Last 7 Days</SelectItem>
-                <SelectItem value="last_30_days">Last 30 Days</SelectItem>
-                <SelectItem value="this_month">This Month</SelectItem>
-                <SelectItem value="last_month">Last Month</SelectItem>
-                <SelectItem value="this_quarter">This Quarter</SelectItem>
-                <SelectItem value="this_year">This Year</SelectItem>
-              </SelectContent>
-            </Select>
+            {canViewFullDashboard && (
+              <Select value={period} onValueChange={setPeriod}>
+                <SelectTrigger className="w-[170px] h-9 text-sm">
+                  <CalendarDays className="h-3.5 w-3.5 mr-2 text-muted-foreground" />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="today">Today</SelectItem>
+                  <SelectItem value="yesterday">Yesterday</SelectItem>
+                  <SelectItem value="last_7_days">Last 7 Days</SelectItem>
+                  <SelectItem value="last_30_days">Last 30 Days</SelectItem>
+                  <SelectItem value="this_month">This Month</SelectItem>
+                  <SelectItem value="last_month">Last Month</SelectItem>
+                  <SelectItem value="this_quarter">This Quarter</SelectItem>
+                  <SelectItem value="this_year">This Year</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
           </div>
 
-          {loading ? (
+          {!canViewFullDashboard ? (
+            <div className="flex flex-col items-center justify-center py-24 text-center">
+              <div className="h-14 w-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+                <BarChart3 className="h-6 w-6 text-primary" />
+              </div>
+              <p className="text-muted-foreground max-w-sm">
+                Use the menu to get to your tools. Ask an administrator if you need access to business-wide reporting here.
+              </p>
+            </div>
+          ) : loading ? (
             <DashboardLoadingState />
           ) : !overview ? (
             <div className="text-center py-20 text-muted-foreground">
@@ -572,6 +612,5 @@ export default function DashboardPage() {
           )}
         </div>
       </div>
-    </PermissionGuard>
   );
 }

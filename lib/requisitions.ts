@@ -100,13 +100,14 @@ export interface Company {
 export interface RequisitionItem {
   id: string;
   requisition_id: string;
-  product_id: string;
+  product_id?: string | null;
+  custom_item_name?: string | null;
   variant_id?: string | null;
   quantity: number;
   notes?: string | null;
   created_at: string;
   updated_at: string;
-  product: Product;
+  product?: Product | null;
   variant?: Variant | null;
 }
 
@@ -156,7 +157,8 @@ export interface RequisitionResponse {
 export async function createRequisition(payload: {
   notes?: string;
   items: Array<{
-    product_id: string;
+    product_id?: string;
+    custom_item_name?: string;
     variant_id?: string;
     quantity: number;
     notes?: string;
@@ -230,7 +232,8 @@ export async function updateRequisition(
     notes?: string;
     items?: Array<{
       id?: string;
-      product_id: string;
+      product_id?: string;
+      custom_item_name?: string;
       variant_id?: string;
       quantity: number;
       notes?: string;

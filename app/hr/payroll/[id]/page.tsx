@@ -10,6 +10,7 @@ import {
   formatKES,
   monthName,
 } from "@/lib/payroll-runs";
+import { useAuth } from "@/lib/auth-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -94,6 +95,7 @@ export default function PayrollRunDetailPage() {
   const params = useParams();
   const router = useRouter();
   const { toast } = useToast();
+  const { hasPermission } = useAuth();
   const runId = params.id as string;
 
   const [run, setRun] = useState<PayrollRun | null>(null);
@@ -265,7 +267,7 @@ export default function PayrollRunDetailPage() {
           </div>
           {getStatusBadge(run.status)}
         </div>
-        {run.status === "draft" && (
+        {run.status === "draft" && hasPermission("can_create_payroll") && (
           <Button
             size="sm"
             onClick={handleProcess}
@@ -485,7 +487,7 @@ export default function PayrollRunDetailPage() {
                         >
                           View
                         </Button>
-                        {run?.status === "draft" && (
+                        {run?.status === "draft" && hasPermission("can_update_payroll") && (
                           <Button
                             variant="outline"
                             size="sm"

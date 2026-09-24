@@ -16,6 +16,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CheckCircle, AlertTriangle, Clock } from "lucide-react";
 import { PayrollRecord } from "@/lib/payroll";
 import { formatCurrency } from "@/lib/finance";
+import { useAuth } from "@/lib/auth-context";
 
 interface PayrollApprovalDialogProps {
   open: boolean;
@@ -31,6 +32,7 @@ export function PayrollApprovalDialog({
   onApprove,
 }: PayrollApprovalDialogProps) {
   const [loading, setLoading] = useState(false);
+  const { hasPermission } = useAuth();
 
   const handleApprove = async () => {
     try {
@@ -59,7 +61,7 @@ export function PayrollApprovalDialog({
     }
   };
 
-  const canApprove = payrollRecord.status.toLowerCase() === 'draft';
+  const canApprove = payrollRecord.status.toLowerCase() === 'draft' && hasPermission("can_approve_payroll");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -124,7 +126,11 @@ export function PayrollApprovalDialog({
             <Alert>
               <Clock className="h-4 w-4" />
               <AlertDescription>
-                This payroll record is already <strong>{payrollRecord.status}</strong> and cannot be approved.
+                {payrollRecord.status.toLowerCase() !== 'draft' ? (
+                  <>This payroll record is already <strong>{payrollRecord.status}</strong> and cannot be approved.</>
+                ) : (
+                  <>Only GM or Directors can approve payroll.</>
+                )}
               </AlertDescription>
             </Alert>
           )}

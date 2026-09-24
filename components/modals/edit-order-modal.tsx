@@ -17,6 +17,7 @@ import { Plus, Search, ShoppingCart, Trash2, X, Edit, Wallet, CreditCard as Cred
 import { getCreditOverage, coversOverage } from "@/lib/credit-overage"
 import { createPayment } from "@/lib/payments"
 import { CreditOveragePrompt } from "@/components/credit-overage-prompt"
+import { InstantPaymentPrompt } from "@/components/instant-payment-prompt"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import apiCall from "@/lib/api"
@@ -35,6 +36,10 @@ type OrderItem = {
   total_price: number
   variant_id?: string
   variant_name?: string | null
+  // Which named product price tier (e.g. "Hospital Price") this line's price
+  // came from, or "Custom" if hand-typed - internal-only, never printed on
+  // a customer-facing order document.
+  price_label?: string | null
 }
 
 type Company = { id: string; name: string }
@@ -75,6 +80,10 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
   const [status, setStatus] = useState("Pending")
   const [paymentStatus, setPaymentStatus] = useState("Unpaid")
   const [amountPaid, setAmountPaid] = useState(0)
+  // What the order already had paid when this modal opened, so editing an
+  // already-settled order doesn't demand a fresh payment method for money
+  // that was recorded previously - only for whatever's newly added here.
+  const [initialAmountPaid, setInitialAmountPaid] = useState(0)
   const [discount, setDiscount] = useState(0)
   const [paymentOption, setPaymentOption] = useState<'instant' | 'credit'>('instant')
   const [creditTerms, setCreditTerms] = useState<CustomerCreditTerms | null>(null)
@@ -82,6 +91,8 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
   const [downPaymentAmount, setDownPaymentAmount] = useState(0)
   const [downPaymentMethod, setDownPaymentMethod] = useState("")
   const [downPaymentTransactionRef, setDownPaymentTransactionRef] = useState("")
+  const [instantPaymentMethod, setInstantPaymentMethod] = useState("")
+  const [instantPaymentReference, setInstantPaymentReference] = useState("")
 
   useEffect(() => {
     const customerId = selectedCustomer?.id
@@ -176,6 +187,9 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
       setPaymentStatus(order.payment_status.charAt(0).toUpperCase() + order.payment_status.slice(1))
       setPaymentOption(order.payment_type === 'credit' ? 'credit' : 'instant')
       setAmountPaid(parseFloat(order.amount_paid || "0"))
+      setInitialAmountPaid(parseFloat(order.amount_paid || "0"))
+      setInstantPaymentMethod("")
+      setInstantPaymentReference("")
     }
   }, [order, open])
 
@@ -271,6 +285,7 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
         product_name: product.name,
         quantity: 1,
         unit_price: unitPrice,
+        price_label: null,
         total_price: unitPrice,
         ...(variantId ? { variant_id: variantId } : {}),
       }
@@ -307,11 +322,12 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
     setOrderItems(updatedItems)
   }
 
-  const handleUpdatePrice = (index: number, price: number) => {
+  const handleUpdatePrice = (index: number, price: number, label: string | null = "Custom") => {
     if (price < 0) return
 
     const updatedItems = [...orderItems]
     updatedItems[index].unit_price = price
+    updatedItems[index].price_label = label
     updatedItems[index].total_price = updatedItems[index].quantity * price
     setOrderItems(updatedItems)
   }
@@ -339,6 +355,12 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
     ? getCreditOverage(calculateTotal(), creditTerms.available_credit)
     : 0
 
+  // Only the newly-added portion needs a payment method - money already
+  // recorded on this order before the modal opened doesn't need re-justifying.
+  const newInstantPaymentAmount = paymentOption === 'instant'
+    ? Math.max(0, amountPaid - initialAmountPaid)
+    : 0
+
   const handleUpdateOrder = async () => {
     // Validation
     if (!selectedCustomer) {
@@ -358,6 +380,16 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
 
     if (creditOverage > 0 && (!coversOverage(downPaymentAmount, creditOverage) || !downPaymentMethod)) {
       toast.error(`This exceeds available credit by KES ${creditOverage.toLocaleString()}. Enter how that amount will be paid now to proceed.`)
+      return
+    }
+
+    if (paymentOption === 'instant' && amountPaid < calculateTotal()) {
+      toast.error("An instant sale needs to be paid in full - enter the full amount paid.")
+      return
+    }
+
+    if (newInstantPaymentAmount > 0 && !instantPaymentMethod) {
+      toast.error("Say how the newly added payment was made.")
       return
     }
 
@@ -386,6 +418,7 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
           product_id: item.product_id,
           quantity: item.quantity,
           unit_price: item.unit_price,
+          price_label: item.price_label || null,
           ...(item.variant_id ? { variant_id: item.variant_id } : {}),
         })),
       }
@@ -402,6 +435,18 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
           payment_method: downPaymentMethod,
           amount_paid: downPaymentAmount,
           transaction_id: downPaymentTransactionRef || undefined,
+          status: 'completed',
+        })
+      }
+
+      // Same idea for an instant sale - only the newly-added amount needs a
+      // fresh Payment record; money already on the order was recorded before.
+      if (newInstantPaymentAmount > 0 && order?.id) {
+        await createPayment({
+          order_id: order.id,
+          payment_method: instantPaymentMethod,
+          amount_paid: newInstantPaymentAmount,
+          transaction_id: instantPaymentReference || undefined,
           status: 'completed',
         })
       }
@@ -732,6 +777,30 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
                               )}
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
+                              {(() => {
+                                const tiers = (product as any)?.price_tiers as { tier_name: string; price: number | string }[] | undefined
+                                if (!tiers || tiers.length === 0) return null
+                                return (
+                                  <Select
+                                    value={item.price_label || ""}
+                                    onValueChange={(label) => {
+                                      const tier = tiers.find(t => t.tier_name === label)
+                                      if (tier) handleUpdatePrice(index, Number(tier.price), label)
+                                    }}
+                                  >
+                                    <SelectTrigger className="h-7 w-24 text-xs mb-1 px-2">
+                                      <SelectValue placeholder="Price..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {tiers.map((t) => (
+                                        <SelectItem key={t.tier_name} value={t.tier_name} className="text-xs">
+                                          {t.tier_name} — {Number(t.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                )
+                              })()}
                               <Input
                                 type="number"
                                 min="0"
@@ -916,6 +985,16 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
                 onDownPaymentTransactionRefChange={setDownPaymentTransactionRef}
               />
             )}
+            {paymentOption === 'instant' && (
+              <InstantPaymentPrompt
+                total={calculateTotal()}
+                amountPaid={amountPaid}
+                paymentMethod={instantPaymentMethod}
+                onPaymentMethodChange={setInstantPaymentMethod}
+                transactionRef={instantPaymentReference}
+                onTransactionRefChange={setInstantPaymentReference}
+              />
+            )}
           </div>
 
           {/* Order Details */}
@@ -1005,7 +1084,9 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
               disabled={
                 loading ||
                 (paymentOption === 'credit' && !creditTerms?.credit_days) ||
-                (creditOverage > 0 && (!coversOverage(downPaymentAmount, creditOverage) || !downPaymentMethod))
+                (creditOverage > 0 && (!coversOverage(downPaymentAmount, creditOverage) || !downPaymentMethod)) ||
+                (paymentOption === 'instant' && amountPaid < calculateTotal()) ||
+                (newInstantPaymentAmount > 0 && !instantPaymentMethod)
               }
             >
               {loading && <Edit className="mr-2 h-4 w-4 animate-spin" />}

@@ -553,10 +553,7 @@ export function InvoicesTable({ initialInvoices = [] }: InvoicesTableProps) {
                     {invoice.invoice_number}
                   </TableCell>
                   <TableCell>
-                    {(invoice.customer as any)?.customer_type === "company"
-                      ? ((invoice.customer as any)?.business_name || invoice.customer?.name || 'N/A')
-                      : (invoice.customer?.name || 'N/A')
-                    }
+                    {(invoice.customer as any)?.business_name || invoice.customer?.name || 'N/A'}
                   </TableCell>
                   <TableCell>
                     {invoice.sales_rep

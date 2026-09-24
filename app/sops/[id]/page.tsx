@@ -741,7 +741,7 @@ export default function SopDetailPage() {
 
   if (isLoading) {
     return (
-      <PermissionGuard permissions={["can_view_finance_menu", "can_manage_system", "can_manage_company"]}>
+      <PermissionGuard permissions={["can_view_sops_menu", "can_view_sops", "can_manage_system", "can_manage_company"]}>
         <div className="flex items-center justify-center h-[60vh]">
           <div className="flex flex-col items-center gap-3">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -754,7 +754,7 @@ export default function SopDetailPage() {
 
   if (!sop) {
     return (
-      <PermissionGuard permissions={["can_view_finance_menu", "can_manage_system", "can_manage_company"]}>
+      <PermissionGuard permissions={["can_view_sops_menu", "can_view_sops", "can_manage_system", "can_manage_company"]}>
         <div className="flex-1 p-8">
           <div className="text-center text-muted-foreground py-10">SOP not found.</div>
         </div>
@@ -769,7 +769,7 @@ export default function SopDetailPage() {
   // ---------------------------------------------------------------------------
 
   return (
-    <PermissionGuard permissions={["can_view_finance_menu", "can_manage_system", "can_manage_company"]}>
+    <PermissionGuard permissions={["can_view_sops_menu", "can_view_sops", "can_manage_system", "can_manage_company"]}>
       <div className="flex-1 space-y-6 p-3 sm:p-4 md:p-8 pt-4 sm:pt-6">
 
         {/* ----------------------------------------------------------------- */}

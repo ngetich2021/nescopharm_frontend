@@ -324,6 +324,11 @@ export function ViewQuoteSheet({
                               {item.packagingUnit && (
                                 <div className="text-xs text-gray-500">per {item.packagingUnit.unit_abbreviation}</div>
                               )}
+                              {/* Which named price tier this was - staff-only
+                                  reference, never shown on a printed quote. */}
+                              {item.price_label && (
+                                <div className="text-xs text-gray-500 italic">{item.price_label}</div>
+                              )}
                             </div>
                           </TableCell>
                           <TableCell className="text-right font-semibold">

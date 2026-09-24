@@ -26,34 +26,20 @@ export function OrderHistory() {
   const [paymentOrder, setPaymentOrder] = useState<any>(null)
   const { hasPermission } = usePermissions()
 
-  // Check if user has permission to view orders
+  // Check if user has permission to view the company's full order list. Sales
+  // reps generally don't (that's staff-only Sales-section access), but they
+  // still need to see their OWN past orders here - the "mine" fetch below
+  // covers that without needing can_view_orders at all.
   const canViewOrders = hasPermission("can_view_orders")
 
   useEffect(() => {
-    if (canViewOrders) {
-      setIsLoading(true)
-      fetchOrders().then((data) => {
-        setOrders(data)
-        setFilteredOrders(data)
-        setIsLoading(false)
-      })
-    } else {
+    setIsLoading(true)
+    fetchOrders(canViewOrders ? {} : { mine: true }).then((data) => {
+      setOrders(data)
+      setFilteredOrders(data)
       setIsLoading(false)
-    }
+    })
   }, [canViewOrders])
-
-  // If user doesn't have permission to view orders, show a message
-  if (!canViewOrders) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <Receipt className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">Access Denied</h3>
-          <p className="text-gray-600">You don't have permission to view orders</p>
-        </div>
-      </div>
-    )
-  }
 
   const handleSearch = (term: string) => {
     setSearchTerm(term)

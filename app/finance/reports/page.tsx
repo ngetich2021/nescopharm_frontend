@@ -90,7 +90,7 @@ export default function FinancialReportsPage() {
     : reports.filter(report => report.category === selectedCategory)
 
   return (
-    <PermissionGuard permissions={["can_generate_financial_reports", "can_manage_system", "can_manage_company"]}>
+    <PermissionGuard permissions={["can_view_financial_reports", "can_manage_system", "can_manage_company"]}>
       <div className="space-y-6">
         {/* Header */}
         <div>

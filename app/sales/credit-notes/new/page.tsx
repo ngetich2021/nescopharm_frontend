@@ -50,7 +50,9 @@ const buildEmptyLineItem = (): EditableLineItem => ({
 
 function getInvoiceCustomerName(invoice: Invoice): string {
   const customer = invoice.customer as any
-  if (customer?.customer_type === "company" && customer?.business_name) {
+  // Show a captured business name whenever it exists, not just for
+  // customer_type === "company" - individuals can fill this in too now.
+  if (customer?.business_name) {
     return customer.business_name
   }
 

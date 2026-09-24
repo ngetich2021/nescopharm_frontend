@@ -7,9 +7,12 @@ export interface Quote {
   customer_id: string
   submitted_by_id?: string | null
   submitted_at?: string | null
+  original_submitted_by_id?: string | null
   submittedBy?: {
     id: string
-    name: string
+    first_name: string
+    last_name: string
+    full_name?: string
   } | null
   total_amount: string
   status: string
@@ -75,6 +78,10 @@ export interface Quote {
     unit_quantity?: number | null
     base_quantity?: number
     unit_price: string
+    // Which named product price tier (see PriceTierInput in lib/products.ts)
+    // was used for this line, or "Custom" for a hand-typed price - internal
+    // reference only, never shown on a customer-facing quote document.
+    price_label?: string | null
     total_price: string
     company_id: string
     created_at: string
@@ -259,6 +266,8 @@ export async function fetchQuotes(
     search?: string;
     status?: string;
     dateRange?: { from: string; to: string };
+    /** Only the current user's own submitted-from-POS quotes; bypasses can_view_quotes. */
+    mine?: boolean;
   } = {}
 ): Promise<Quote[]> {
   // Server-side check
@@ -271,14 +280,15 @@ export async function fetchQuotes(
   if (!token) {
     return [];
   }
-  
+
   // Build query parameters
   const queryParams = new URLSearchParams();
-  
+
   if (filters.search) queryParams.append('search', filters.search);
   if (filters.status && filters.status !== 'all') queryParams.append('status', filters.status);
   if (filters.dateRange?.from) queryParams.append('from_date', filters.dateRange.from);
   if (filters.dateRange?.to) queryParams.append('to_date', filters.dateRange.to);
+  if (filters.mine) queryParams.append('mine', '1');
   
   const queryString = queryParams.toString() ? `?${queryParams.toString()}` : '';
   const requestKey = `quotes${queryString}`;
@@ -362,7 +372,7 @@ export async function getQuoteById(quoteId: string): Promise<Quote | null> {
  */
 export async function createQuote(quoteData: {
   customer_id: string;
-  items: { product_id: string; variant_id?: string | null; quantity: number; unit_price: string }[];
+  items: { product_id: string; variant_id?: string | null; quantity: number; unit_price: string; price_label?: string | null }[];
   notes?: string;
   valid_until?: string;
   status?: string;
@@ -421,7 +431,7 @@ export async function updateQuote(
   quoteId: string, 
   quoteData: {
     customer_id?: string;
-    items?: { product_id: string; variant_id?: string | null; quantity: number; unit_price: string }[];
+    items?: { product_id: string; variant_id?: string | null; quantity: number; unit_price: string; price_label?: string | null }[];
     notes?: string;
     valid_until?: string;
     status?: string;
@@ -532,27 +542,30 @@ export async function deleteQuote(quoteId: string): Promise<boolean> {
 /**
  * Converts a quote to an order.
  */
-export async function convertQuoteToOrder(quoteId: string): Promise<any> {
+export async function convertQuoteToOrder(
+  quoteId: string,
+  options: { payment_option?: "instant" | "credit" } = {}
+): Promise<any> {
   // Server-side check
   if (typeof window === 'undefined') {
     throw new Error("convertQuoteToOrder must be called client-side");
   }
-  
+
   // Check for token
   const token = localStorage.getItem('token');
   if (!token) {
     throw new Error("Authentication required. Please sign in to convert a quote to order.");
   }
-  
+
   const requestKey = `convert_quote_${quoteId}`;
-  
+
   // Use the RequestTracker to deduplicate requests
   return RequestTracker.getInstance().trackRequest(requestKey, async () => {
     try {
       const response = await apiCall<{status: string; order?: any; message?: string}>(
-        `/quotes/${quoteId}/convert-to-order`, 
-        "POST", 
-        undefined, 
+        `/quotes/${quoteId}/convert-to-order`,
+        "POST",
+        options.payment_option ? { payment_option: options.payment_option } : undefined,
         true
       );
       
@@ -570,16 +583,79 @@ export async function convertQuoteToOrder(quoteId: string): Promise<any> {
       if (error.message && error.message.includes("role")) {
         throw new Error("You don't have permission to convert quotes to orders. Please check your role.");
       }
-      
+
       if (error.message && error.message.includes("company_id") && error.message.includes("null")) {
         throw new Error("Company ID is required. Please ensure your account is associated with a company.");
       }
-      
+
       if (error.isPdoError) {
         throw new Error("Database connection issue occurred. Please try again.");
       }
-      
+
       throw error;
     }
+  });
+}
+
+/**
+ * Rep confirms a quote they originally submitted from POS (after staff have
+ * reviewed/adjusted pricing) - turns it into a real order.
+ */
+export async function confirmQuote(
+  quoteId: string,
+  options: { payment_option?: "instant" | "credit" } = {}
+): Promise<any> {
+  if (typeof window === 'undefined') {
+    throw new Error("confirmQuote must be called client-side");
+  }
+  const token = localStorage.getItem('token');
+  if (!token) {
+    throw new Error("Authentication required. Please sign in to confirm this quote.");
+  }
+
+  const requestKey = `confirm_quote_${quoteId}`;
+  return RequestTracker.getInstance().trackRequest(requestKey, async () => {
+    const response = await apiCall<{ status: string; order?: any; message?: string }>(
+      `/quotes/${quoteId}/confirm`,
+      "POST",
+      options.payment_option ? { payment_option: options.payment_option } : undefined,
+      true
+    );
+
+    if (response.status === "success" && response.order) {
+      return response.order;
+    }
+    const errorMessage = typeof response.message === 'string' ? response.message : 'Failed to confirm quote';
+    throw new Error(errorMessage);
+  });
+}
+
+/**
+ * Rep sends a quote awaiting their confirmation back to staff for further
+ * price adjustment, with an optional note.
+ */
+export async function requestQuoteChanges(quoteId: string, note?: string): Promise<Quote> {
+  if (typeof window === 'undefined') {
+    throw new Error("requestQuoteChanges must be called client-side");
+  }
+  const token = localStorage.getItem('token');
+  if (!token) {
+    throw new Error("Authentication required. Please sign in to request changes.");
+  }
+
+  const requestKey = `request_changes_${quoteId}`;
+  return RequestTracker.getInstance().trackRequest(requestKey, async () => {
+    const response = await apiCall<QuoteApiResponse>(
+      `/quotes/${quoteId}/request-changes`,
+      "POST",
+      { note },
+      true
+    );
+
+    if (response.status === "success" && response.quote) {
+      return normalizeQuote(response.quote);
+    }
+    const errorMessage = typeof response.message === 'string' ? response.message : 'Failed to request changes';
+    throw new Error(errorMessage);
   });
 }

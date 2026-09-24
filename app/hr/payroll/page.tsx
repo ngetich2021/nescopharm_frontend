@@ -14,6 +14,7 @@ import {
   formatKES,
   monthName,
 } from "@/lib/payroll-runs";
+import { useAuth } from "@/lib/auth-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -100,6 +101,7 @@ function getStatusBadge(status: string) {
 export default function PayrollPage() {
   const router = useRouter();
   const { toast } = useToast();
+  const { hasPermission } = useAuth();
 
   // Stats
   const [stats, setStats] = useState<PayrollStats | null>(null);
@@ -437,7 +439,7 @@ export default function PayrollPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center gap-1 justify-end">
-                        {run.status === "draft" && (
+                        {run.status === "draft" && hasPermission("can_create_payroll") && (
                             <Button
                               variant="ghost"
                               size="icon"
@@ -453,7 +455,8 @@ export default function PayrollPage() {
                             </Button>
                           )}
                         {run.status === "draft" &&
-                          (run.payslips_count ?? 0) > 0 && (
+                          (run.payslips_count ?? 0) > 0 &&
+                          hasPermission("can_approve_payroll") && (
                             <Button
                               variant="ghost"
                               size="icon"
@@ -464,7 +467,7 @@ export default function PayrollPage() {
                               <CheckCircle2 className="h-4 w-4" />
                             </Button>
                           )}
-                        {run.status === "approved" && (
+                        {run.status === "approved" && hasPermission("can_process_payroll") && (
                           <Button
                             variant="ghost"
                             size="icon"

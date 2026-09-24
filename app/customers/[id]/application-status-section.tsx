@@ -24,23 +24,47 @@ import {
 } from "lucide-react"
 import {
   type CustomerApproval,
+  type CreditApplicationInput,
   getCustomerApprovals,
   submitCustomerApproval,
   uploadSignedCreditApplication,
+  uploadStampedCreditApplication,
   fetchCustomerCreditTerms,
   type CustomerCreditTerms,
 } from "@/lib/customers"
+import { getCustomerAccount, updateCustomerAccount, type CustomerAccountWithDetails } from "@/lib/customer-accounts"
 import { getDocuments, type Document as CustomerDocument } from "@/lib/documents"
+import { compressImageIfLarge } from "@/lib/image-compression"
+
+// Deliberately a small structural subset (not the full Customer type) - the
+// different pages/modals that render this section each carry their own
+// slightly-diverged local Customer type, and this only needs to read these
+// few fields to show what was actually submitted for review.
+interface ReviewableCustomer {
+  account_id?: string | null
+  pending_credit_application?: CreditApplicationInput | null
+  accounts_contact_name?: string | null
+  accounts_contact_designation?: string | null
+  accounts_contact_phone?: string | null
+  accounts_contact_email?: string | null
+}
 
 interface ApplicationStatusSectionProps {
   customerId: string
   /** The customer's current approval_status (undefined/null for customers not in the workflow). */
   approvalStatus: string | null | undefined
+  /**
+   * The full customer record, so the reviewer can see what was actually
+   * submitted (directors, trade references, bank details, requested credit
+   * terms, authorized/accounts contact) before approving or rejecting -
+   * without this there's no data to review a decision against.
+   */
+  customer?: ReviewableCustomer | null
   /** Re-fetches the customer profile (and therefore approval_status) from the parent. */
   onRefresh: () => void | Promise<void>
 }
 
-const STATUS_META: Record<string, { label: string; className: string }> = {
+export const STATUS_META: Record<string, { label: string; className: string }> = {
   draft: { label: "Draft", className: "bg-gray-100 text-gray-800" },
   pending_stage1: { label: "Pending Stage 1 Review", className: "bg-yellow-100 text-yellow-800" },
   pending_documents: { label: "Awaiting Signed Documents", className: "bg-blue-100 text-blue-800" },
@@ -56,10 +80,13 @@ const STATUS_META: Record<string, { label: string; className: string }> = {
 // they went through the workflow (checked in the component below).
 const ALWAYS_SHOW_STATUSES = new Set(["pending_stage1", "pending_documents", "pending_stage2", "rejected"])
 
-// Once Stage 1 is approved (pending_documents or later), the rep-facing
-// print/download-for-stamping entry point becomes available. It must never
-// appear before that.
-const SHOW_PRINT_STATUSES = new Set(["pending_documents", "pending_stage2", "approved"])
+// The print/download entry point exists so the rep can get a blank copy of
+// the computer-generated form to take to the customer for signing - it's
+// only useful during that one window (Stage 1 approved, signed copy not
+// uploaded yet). Once a real signed scan exists, reviewers should look at
+// that actual document (see DocumentPreview below), not a re-rendered PDF of
+// the live data, so this must not appear at pending_stage2/approved.
+const SHOW_PRINT_STATUSES = new Set(["pending_documents"])
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return "—"
@@ -91,7 +118,61 @@ function formatKES(amount: string | number | null | undefined): string {
   return Number.isNaN(num) ? "—" : `KES ${num.toLocaleString()}`
 }
 
-export function ApplicationStatusSection({ customerId, approvalStatus: rawApprovalStatus, onRefresh }: ApplicationStatusSectionProps) {
+function formatKESOrPlain(amount: string | number | null | undefined): string {
+  if (amount === null || amount === undefined || amount === "") return "—"
+  const num = Number(amount)
+  return Number.isNaN(num) ? String(amount) : `KES ${num.toLocaleString()}`
+}
+
+function isImageUrl(url: string | null | undefined): boolean {
+  if (!url) return false
+  return /\.(png|jpe?g|gif|webp|heic|heif)(\?|#|$)/i.test(url)
+}
+
+// The reviewer needs to actually SEE the photo/scan the rep uploaded, right
+// on this page - a bare "View signed document" link that opens a new tab
+// makes them guess what's behind it. Show the image inline when it is one;
+// fall back to a plain link for PDFs/other file types.
+function DocumentPreview({ document: doc, emptyLabel }: { document: CustomerDocument | null; emptyLabel: string }) {
+  if (!doc) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+        <ShieldAlert className="h-4 w-4 shrink-0" />
+        {emptyLabel}
+      </div>
+    )
+  }
+  const url = (doc as any).url || doc.document_image || ""
+  if (isImageUrl(url)) {
+    return (
+      <a href={url} target="_blank" rel="noopener noreferrer" className="block w-fit group">
+        <img
+          src={url}
+          alt={doc.document_name}
+          className="max-h-64 w-auto rounded-md border object-contain group-hover:opacity-90 transition-opacity"
+        />
+        <span className="mt-1 inline-flex items-center gap-1 text-xs text-primary group-hover:underline">
+          <ExternalLink className="h-3 w-3" />
+          Open full size
+        </span>
+      </a>
+    )
+  }
+  return (
+    <a
+      href={url || "#"}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
+    >
+      <FileText className="h-4 w-4" />
+      View {doc.document_name}
+      <ExternalLink className="h-3 w-3" />
+    </a>
+  )
+}
+
+export function ApplicationStatusSection({ customerId, approvalStatus: rawApprovalStatus, customer, onRefresh }: ApplicationStatusSectionProps) {
   const { toast } = useToast()
   const { hasPermission } = usePermissions()
   const canApprove = hasPermission("can_approve_account")
@@ -100,6 +181,7 @@ export function ApplicationStatusSection({ customerId, approvalStatus: rawApprov
   const [isLoadingHistory, setIsLoadingHistory] = useState(true)
 
   const [signedDocument, setSignedDocument] = useState<CustomerDocument | null>(null)
+  const [stampedDocument, setStampedDocument] = useState<CustomerDocument | null>(null)
   const [isLoadingDocuments, setIsLoadingDocuments] = useState(true)
 
   const [creditTerms, setCreditTerms] = useState<CustomerCreditTerms | null>(null)
@@ -107,8 +189,33 @@ export function ApplicationStatusSection({ customerId, approvalStatus: rawApprov
   const [notes, setNotes] = useState("")
   const [isSubmittingDecision, setIsSubmittingDecision] = useState<"approved" | "rejected" | null>(null)
 
+  // Editable credit terms for Stage 1 approval - default to what the rep
+  // submitted, but the approver can adjust before the CustomerAccount gets
+  // created from these values.
+  const [editAnnualTurnover, setEditAnnualTurnover] = useState("")
+  const [editCreditRequired, setEditCreditRequired] = useState("")
+  const [editCreditPeriod, setEditCreditPeriod] = useState("")
+  const [editPdChequeDays, setEditPdChequeDays] = useState("")
+
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isUploading, setIsUploading] = useState(false)
+
+  // The approver's own company-stamped copy - a separate attachment from the
+  // rep's customer-signed scan above, uploaded once there's something to
+  // stamp (pending_stage2 onward).
+  const [selectedStampedFile, setSelectedStampedFile] = useState<File | null>(null)
+  const [isUploadingStamped, setIsUploadingStamped] = useState(false)
+
+  // Official Approval Details (Section 8 of the paper Credit Appraisal Form)
+  // - once the customer has a CustomerAccount (post Stage 1), the approver
+  // can set/adjust the actually-granted credit limit and terms right here,
+  // instead of having to find the separate printable credit-form page.
+  const [account, setAccount] = useState<CustomerAccountWithDetails | null>(null)
+  const [isLoadingAccount, setIsLoadingAccount] = useState(false)
+  const [approvedCreditLimit, setApprovedCreditLimit] = useState("")
+  const [approvedCreditDays, setApprovedCreditDays] = useState("")
+  const [officialRemarks, setOfficialRemarks] = useState("")
+  const [isSavingOfficialUse, setIsSavingOfficialUse] = useState(false)
 
   const approvalStatus = rawApprovalStatus || "draft"
 
@@ -148,8 +255,15 @@ export function ApplicationStatusSection({ customerId, approvalStatus: rawApprov
           (d.document_name || "").toLowerCase().includes("signed credit application"),
         )
         setSignedDocument(signed || null)
+        const stamped = docs.find((d) =>
+          (d.document_name || "").toLowerCase().includes("stamped credit application"),
+        )
+        setStampedDocument(stamped || null)
       } catch {
-        if (!cancelled) setSignedDocument(null)
+        if (!cancelled) {
+          setSignedDocument(null)
+          setStampedDocument(null)
+        }
       } finally {
         if (!cancelled) setIsLoadingDocuments(false)
       }
@@ -179,6 +293,65 @@ export function ApplicationStatusSection({ customerId, approvalStatus: rawApprov
     }
   }, [customerId, approvalStatus])
 
+  const pendingApp = customer?.pending_credit_application
+  useEffect(() => {
+    setEditAnnualTurnover(pendingApp?.annual_turnover != null ? String(pendingApp.annual_turnover) : "")
+    setEditCreditRequired(pendingApp?.credit_required != null ? String(pendingApp.credit_required) : "")
+    setEditCreditPeriod(pendingApp?.credit_period_required || "")
+    setEditPdChequeDays(pendingApp?.credit_period_pd_cheque_days != null ? String(pendingApp.credit_period_pd_cheque_days) : "")
+  }, [customerId, pendingApp?.annual_turnover, pendingApp?.credit_required, pendingApp?.credit_period_required, pendingApp?.credit_period_pd_cheque_days])
+
+  const accountId = customer?.account_id
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadAccount() {
+      setIsLoadingAccount(true)
+      try {
+        const data = await getCustomerAccount(accountId as string)
+        if (!cancelled) setAccount(data)
+      } catch {
+        if (!cancelled) setAccount(null)
+      } finally {
+        if (!cancelled) setIsLoadingAccount(false)
+      }
+    }
+
+    if (accountId) loadAccount()
+    else setAccount(null)
+    return () => {
+      cancelled = true
+    }
+  }, [accountId])
+
+  useEffect(() => {
+    setApprovedCreditLimit(account?.credit_required != null ? String(account.credit_required) : "")
+    setApprovedCreditDays(account?.credit_days != null ? String(account.credit_days) : "")
+    setOfficialRemarks(account?.notes || "")
+  }, [account?.credit_required, account?.credit_days, account?.notes])
+
+  async function handleSaveOfficialUse() {
+    if (!account) return
+    setIsSavingOfficialUse(true)
+    try {
+      const updated = await updateCustomerAccount(account.id, {
+        credit_required: approvedCreditLimit.trim() ? (approvedCreditLimit as any) : null,
+        credit_days: approvedCreditDays.trim() ? (Number(approvedCreditDays) as any) : null,
+        notes: officialRemarks.trim() || null,
+      })
+      setAccount((prev) => (prev ? { ...prev, ...updated } : prev))
+      toast({ title: "Saved", description: "Official approval details have been saved." })
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to save official approval details.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSavingOfficialUse(false)
+    }
+  }
+
   const hasWorkflowHistory = approvals.length > 0
   const shouldRender = ALWAYS_SHOW_STATUSES.has(approvalStatus) || hasWorkflowHistory
 
@@ -195,13 +368,25 @@ export function ApplicationStatusSection({ customerId, approvalStatus: rawApprov
   const canGiveDecision = canApprove && (approvalStatus === "pending_stage1" || approvalStatus === "pending_stage2")
   const isStage2 = approvalStatus === "pending_stage2"
   const stage2Blocked = isStage2 && !isLoadingDocuments && !signedDocument
+  // The CustomerAccount is only (re)built from these terms at Stage 1 -
+  // Stage 2 is just the final document check, so editing them there would
+  // have no effect and would be misleading to show as editable.
+  const canEditCreditTerms = canGiveDecision && !isStage2
 
   const latestRejection = [...approvals].reverse().find((a) => a.status === "rejected")
 
   async function handleDecision(status: "approved" | "rejected") {
     setIsSubmittingDecision(status)
     try {
-      await submitCustomerApproval(customerId, { status, notes: notes.trim() || undefined })
+      const overrides = status === "approved" && canEditCreditTerms
+        ? {
+            annual_turnover: editAnnualTurnover.trim() ? Number(editAnnualTurnover) : undefined,
+            credit_required: editCreditRequired.trim() ? Number(editCreditRequired) : undefined,
+            credit_period_required: editCreditPeriod.trim() || undefined,
+            credit_period_pd_cheque_days: editPdChequeDays.trim() ? Number(editPdChequeDays) : undefined,
+          }
+        : {}
+      await submitCustomerApproval(customerId, { status, notes: notes.trim() || undefined, ...overrides })
       toast({
         title: status === "approved" ? "Approved" : "Rejected",
         description: `The application has been ${status} successfully.`,
@@ -221,18 +406,22 @@ export function ApplicationStatusSection({ customerId, approvalStatus: rawApprov
 
   async function handleUpload() {
     if (!selectedFile) return
-    if (selectedFile.size > 5 * 1024 * 1024) {
-      toast({
-        title: "File too large",
-        description: "The signed application must be 5MB or smaller.",
-        variant: "destructive",
-      })
-      return
-    }
 
     setIsUploading(true)
     try {
-      await uploadSignedCreditApplication(customerId, selectedFile)
+      // A phone photo of the signed form is usually why this was "too
+      // large" - shrink it automatically instead of making whoever's
+      // uploading find a way to resize it themselves.
+      const fileToUpload = await compressImageIfLarge(selectedFile)
+      if (fileToUpload.size > 15 * 1024 * 1024) {
+        toast({
+          title: "File too large",
+          description: "The signed application must be 15MB or smaller, even after compression.",
+          variant: "destructive",
+        })
+        return
+      }
+      await uploadSignedCreditApplication(customerId, fileToUpload)
       toast({
         title: "Uploaded",
         description: "Signed credit application uploaded. Moved to Stage 2 review.",
@@ -247,6 +436,38 @@ export function ApplicationStatusSection({ customerId, approvalStatus: rawApprov
       })
     } finally {
       setIsUploading(false)
+    }
+  }
+
+  async function handleUploadStamped() {
+    if (!selectedStampedFile) return
+
+    setIsUploadingStamped(true)
+    try {
+      const fileToUpload = await compressImageIfLarge(selectedStampedFile)
+      if (fileToUpload.size > 15 * 1024 * 1024) {
+        toast({
+          title: "File too large",
+          description: "The stamped copy must be 15MB or smaller, even after compression.",
+          variant: "destructive",
+        })
+        return
+      }
+      const { document } = await uploadStampedCreditApplication(customerId, fileToUpload)
+      setStampedDocument(document as unknown as CustomerDocument)
+      toast({
+        title: "Uploaded",
+        description: "Company-stamped copy uploaded.",
+      })
+      setSelectedStampedFile(null)
+    } catch (error: any) {
+      toast({
+        title: "Upload failed",
+        description: error.message || "Failed to upload the stamped copy.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsUploadingStamped(false)
     }
   }
 
@@ -296,7 +517,7 @@ export function ApplicationStatusSection({ customerId, approvalStatus: rawApprov
               <span>Print or download the credit application for the customer to sign and stamp.</span>
             </div>
             <Button variant="outline" size="sm" asChild>
-              <Link href={`/customers/${customerId}/credit-form`} target="_blank" rel="noopener noreferrer">
+              <Link href={`/customers/${customerId}/credit-form`}>
                 <ExternalLink className="h-4 w-4 mr-2" />
                 Print / Download
               </Link>
@@ -313,7 +534,7 @@ export function ApplicationStatusSection({ customerId, approvalStatus: rawApprov
             </div>
             <p className="text-sm text-muted-foreground">
               Once the customer has signed and stamped the printed application, upload a scan or photo here
-              (max 5MB) to move this application to Stage 2 review.
+              to move this application to Stage 2 review. Large photos are compressed automatically.
             </p>
             <div className="flex flex-col sm:flex-row gap-2">
               <Input
@@ -340,6 +561,249 @@ export function ApplicationStatusSection({ customerId, approvalStatus: rawApprov
               <p className="text-xs text-muted-foreground">
                 Selected: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(0)} KB)
               </p>
+            )}
+          </div>
+        )}
+
+        {/* Submitted Application Details - directors, trade references, bank
+            details, requested credit terms, and the authorized/accounts
+            contact captured when the rep submitted this application. Shown
+            for both Stage 1 and Stage 2 review - without this there's no
+            data to actually review before approving or rejecting. */}
+        {(() => {
+          const app = customer?.pending_credit_application
+          const hasDirectors = !!app?.directors?.length
+          const hasSuppliers = !!app?.suppliers?.length
+          const hasBankDetails = !!app?.bank_details?.length
+          const hasCreditTerms = app && (
+            app.annual_turnover != null || app.credit_required != null ||
+            app.credit_period_required != null || app.credit_period_pd_cheque_days != null
+          )
+          const hasAccountsContact = !!(
+            customer?.accounts_contact_name || customer?.accounts_contact_phone || customer?.accounts_contact_email
+          )
+          const hasAnything = hasDirectors || hasSuppliers || hasBankDetails || hasCreditTerms || hasAccountsContact
+
+          if (!hasAnything) return null
+
+          return (
+            <div className="rounded-md border p-4 space-y-4">
+              <div className="font-medium text-sm">Submitted Application Details</div>
+
+              {(hasCreditTerms || canEditCreditTerms) && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1.5">
+                    {canEditCreditTerms ? "Credit Terms (as requested - adjust to what you're approving)" : "Requested Credit Terms"}
+                  </p>
+                  {canEditCreditTerms ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                      <div className="space-y-1">
+                        <Label htmlFor="edit-annual-turnover" className="text-xs text-muted-foreground font-normal">Annual Turnover (KES)</Label>
+                        <Input
+                          id="edit-annual-turnover"
+                          type="number"
+                          min="0"
+                          value={editAnnualTurnover}
+                          onChange={(e) => setEditAnnualTurnover(e.target.value)}
+                          disabled={isSubmittingDecision !== null}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="edit-credit-required" className="text-xs text-muted-foreground font-normal">Credit Required (KES)</Label>
+                        <Input
+                          id="edit-credit-required"
+                          type="number"
+                          min="0"
+                          value={editCreditRequired}
+                          onChange={(e) => setEditCreditRequired(e.target.value)}
+                          disabled={isSubmittingDecision !== null}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="edit-credit-period" className="text-xs text-muted-foreground font-normal">Credit Period</Label>
+                        <Input
+                          id="edit-credit-period"
+                          value={editCreditPeriod}
+                          onChange={(e) => setEditCreditPeriod(e.target.value)}
+                          placeholder="e.g. 30 days"
+                          disabled={isSubmittingDecision !== null}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="edit-pd-cheque-days" className="text-xs text-muted-foreground font-normal">Post-Dated Cheque Days</Label>
+                        <Input
+                          id="edit-pd-cheque-days"
+                          type="number"
+                          min="0"
+                          max="365"
+                          value={editPdChequeDays}
+                          onChange={(e) => setEditPdChequeDays(e.target.value)}
+                          disabled={isSubmittingDecision !== null}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Annual Turnover</p>
+                        <p className="font-medium">{formatKES(app?.annual_turnover)}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Credit Required</p>
+                        <p className="font-medium">{formatKES(app?.credit_required)}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Credit Period</p>
+                        <p className="font-medium">{app?.credit_period_required || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Post-Dated Cheque Days</p>
+                        <p className="font-medium">{app?.credit_period_pd_cheque_days ?? "—"}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {hasAccountsContact && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1.5">Authorized / Accounts Contact</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Name</p>
+                      <p className="font-medium">{customer?.accounts_contact_name || "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Designation</p>
+                      <p className="font-medium">{customer?.accounts_contact_designation || "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Phone</p>
+                      <p className="font-medium">{customer?.accounts_contact_phone || "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Email</p>
+                      <p className="font-medium">{customer?.accounts_contact_email || "—"}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {hasDirectors && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1.5">Directors / Business Owners</p>
+                  <div className="space-y-1.5">
+                    {app!.directors!.map((d, i) => (
+                      <div key={i} className="text-sm rounded border px-3 py-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <div><span className="text-xs text-muted-foreground">Name: </span>{d.name || "—"}</div>
+                        <div><span className="text-xs text-muted-foreground">ID/Passport: </span>{d.id_passport_number || "—"}</div>
+                        <div><span className="text-xs text-muted-foreground">PIN: </span>{d.pin || "—"}</div>
+                        <div><span className="text-xs text-muted-foreground">Phone: </span>{d.phone_number || "—"}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {hasSuppliers && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1.5">Trade References / Suppliers</p>
+                  <div className="space-y-1.5">
+                    {app!.suppliers!.map((s, i) => (
+                      <div key={i} className="text-sm rounded border px-3 py-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <div><span className="text-xs text-muted-foreground">Name: </span>{s.name || "—"}</div>
+                        <div><span className="text-xs text-muted-foreground">Contact Person: </span>{s.contact_person_name || "—"}</div>
+                        <div><span className="text-xs text-muted-foreground">Phone: </span>{s.phone_number || "—"}</div>
+                        <div><span className="text-xs text-muted-foreground">Credit Limit: </span>{formatKESOrPlain(s.credit_limit)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {hasBankDetails && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1.5">Bank Details</p>
+                  <div className="space-y-1.5">
+                    {app!.bank_details!.map((b, i) => (
+                      <div key={i} className="text-sm rounded border px-3 py-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <div><span className="text-xs text-muted-foreground">Bank: </span>{b.bank_name || "—"}</div>
+                        <div><span className="text-xs text-muted-foreground">Branch: </span>{b.branch || "—"}</div>
+                        <div><span className="text-xs text-muted-foreground">Account Name: </span>{b.account_name || "—"}</div>
+                        <div><span className="text-xs text-muted-foreground">Account Number: </span>{b.account_number || "—"}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })()}
+
+        {/* Official Approval Details (Section 8 of the paper form) - once the
+            customer has a CustomerAccount (Stage 1 cleared), this is where
+            the approver sets/adjusts the actually-granted credit limit and
+            terms. Shown directly here (not just on the separate printable
+            credit-form page) so it's not easy to miss. */}
+        {accountId && (
+          <div className="rounded-md border p-4 space-y-4">
+            <div className="font-medium text-sm">Official Approval Details</div>
+            {isLoadingAccount ? (
+              <p className="text-sm text-muted-foreground">Loading account…</p>
+            ) : !account ? (
+              <p className="text-sm text-muted-foreground">Could not load the customer's credit account.</p>
+            ) : canApprove ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="space-y-1">
+                    <Label htmlFor="approved-credit-limit" className="text-xs text-muted-foreground font-normal">Approved Credit Limit (KES)</Label>
+                    <Input
+                      id="approved-credit-limit"
+                      type="number"
+                      min="0"
+                      value={approvedCreditLimit}
+                      onChange={(e) => setApprovedCreditLimit(e.target.value)}
+                      disabled={isSavingOfficialUse}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="approved-credit-days" className="text-xs text-muted-foreground font-normal">Approved Credit Terms (Days)</Label>
+                    <Input
+                      id="approved-credit-days"
+                      type="number"
+                      min="0"
+                      value={approvedCreditDays}
+                      onChange={(e) => setApprovedCreditDays(e.target.value)}
+                      disabled={isSavingOfficialUse}
+                    />
+                  </div>
+                  <div className="col-span-2 space-y-1">
+                    <Label htmlFor="official-remarks" className="text-xs text-muted-foreground font-normal">Remarks</Label>
+                    <Textarea
+                      id="official-remarks"
+                      value={officialRemarks}
+                      onChange={(e) => setOfficialRemarks(e.target.value)}
+                      rows={2}
+                      disabled={isSavingOfficialUse}
+                    />
+                  </div>
+                </div>
+                <Button size="sm" onClick={handleSaveOfficialUse} disabled={isSavingOfficialUse}>
+                  {isSavingOfficialUse ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+                  {isSavingOfficialUse ? "Saving..." : "Save"}
+                </Button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <p className="text-xs text-muted-foreground">Approved Credit Limit</p>
+                  <p className="font-medium">{formatKES(account.credit_required)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Approved Credit Terms (Days)</p>
+                  <p className="font-medium">{account.credit_days ?? "—"}</p>
+                </div>
+              </div>
             )}
           </div>
         )}
@@ -372,25 +836,16 @@ export function ApplicationStatusSection({ customerId, approvalStatus: rawApprov
             )}
 
             <div className="pt-2 border-t">
-              <p className="text-xs text-muted-foreground mb-1">Signed, Stamped Credit Application</p>
+              <p className="text-xs text-muted-foreground mb-2">
+                Signed, Stamped Credit Application (uploaded by the rep) - review this before deciding.
+              </p>
               {isLoadingDocuments ? (
                 <p className="text-sm text-muted-foreground">Checking for uploaded document…</p>
-              ) : signedDocument ? (
-                <a
-                  href={(signedDocument as any).url || signedDocument.document_image || "#"}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
-                >
-                  <FileText className="h-4 w-4" />
-                  View signed document
-                  <ExternalLink className="h-3 w-3" />
-                </a>
               ) : (
-                <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
-                  <ShieldAlert className="h-4 w-4 shrink-0" />
-                  No signed document found yet. Final approval is blocked until one is uploaded.
-                </div>
+                <DocumentPreview
+                  document={signedDocument}
+                  emptyLabel="No signed document found yet. Final approval is blocked until one is uploaded."
+                />
               )}
             </div>
           </div>
@@ -445,6 +900,45 @@ export function ApplicationStatusSection({ customerId, approvalStatus: rawApprov
                 Final approval is disabled until the signed, stamped credit application is uploaded.
               </p>
             )}
+          </div>
+        )}
+
+        {/* Approver's own company-stamped copy - purely a record-keeping
+            attachment, available once there's something to stamp; never
+            blocks approve/reject. */}
+        {canApprove && (approvalStatus === "pending_stage2" || approvalStatus === "approved") && (
+          <div className="rounded-md border p-4 space-y-3">
+            <div className="font-medium text-sm">Company-Stamped Copy</div>
+            <p className="text-sm text-muted-foreground">
+              After stamping your copy of the credit application, upload a scan or photo here for the record.
+              This is optional and doesn't affect the approval decision above.
+            </p>
+            {isLoadingDocuments ? (
+              <p className="text-sm text-muted-foreground">Checking for uploaded document…</p>
+            ) : (
+              <DocumentPreview document={stampedDocument} emptyLabel="No stamped copy uploaded yet." />
+            )}
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Input
+                type="file"
+                onChange={(e) => setSelectedStampedFile(e.target.files?.[0] || null)}
+                disabled={isUploadingStamped}
+                accept="image/*,.pdf"
+                className="flex-1"
+              />
+              <Button
+                onClick={handleUploadStamped}
+                disabled={!selectedStampedFile || isUploadingStamped}
+                variant="outline"
+              >
+                {isUploadingStamped ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Upload className="h-4 w-4 mr-2" />
+                )}
+                {stampedDocument ? "Replace" : "Upload"}
+              </Button>
+            </div>
           </div>
         )}
 

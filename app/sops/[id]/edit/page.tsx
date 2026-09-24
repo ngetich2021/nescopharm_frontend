@@ -9,7 +9,7 @@ export default function EditSopPage() {
   const sopId = params.id as string
 
   return (
-    <PermissionGuard permissions={["can_view_finance_menu", "can_manage_system", "can_manage_company"]}>
+    <PermissionGuard permissions={["can_view_sops_menu", "can_view_sops", "can_manage_system", "can_manage_company"]}>
       <SopForm mode="edit" sopId={sopId} />
     </PermissionGuard>
   )

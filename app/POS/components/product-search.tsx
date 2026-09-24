@@ -1,13 +1,11 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Search, Package } from "lucide-react"
-import { useToast } from "@/hooks/use-toast"
+import { Search } from "lucide-react"
 import { getProducts } from "@/lib/products"
 import { Button } from "@/components/ui/button"
 
@@ -39,19 +37,73 @@ interface ProductSearchProps {
   onAddToCart: (product: Product, variant?: ProductVariant) => void
 }
 
+// Each entry the grid renders/searches over is a concrete sellable item - a
+// plain product, or one specific variant of a variant-parent product. A
+// product with variants contributes one entry per variant (never the parent
+// itself), so every variant is its own directly-searchable, directly-add
+// card instead of being hidden behind a "select variant" step.
+interface SearchItem {
+  key: string
+  product: Product
+  variant?: ProductVariant
+  name: string
+  sku: string
+  price: string | number
+  stock: number
+  image: string | null
+}
+
+function buildSearchItems(products: Product[]): SearchItem[] {
+  const items: SearchItem[] = []
+  for (const product of products) {
+    if (product.variants && product.variants.length > 0) {
+      for (const variant of product.variants) {
+        items.push({
+          key: `${product.id}-${variant.id}`,
+          product,
+          variant,
+          name: variant.name,
+          sku: variant.sku || "",
+          price: variant.price,
+          stock: variant.stock_quantity ?? 0,
+          image:
+            variant.primary_image_url ||
+            (variant.image_urls && variant.image_urls.length > 0 ? variant.image_urls[0] : null) ||
+            (variant.images && variant.images.length > 0 ? variant.images[0] : null) ||
+            product.primary_image_url ||
+            (product.image_urls && product.image_urls.length > 0 ? product.image_urls[0] : null) ||
+            product.image_url ||
+            null,
+        })
+      }
+    } else {
+      items.push({
+        key: product.id,
+        product,
+        name: product.name,
+        sku: product.sku || "",
+        price: product.price,
+        stock: product.stock_quantity ?? 0,
+        image:
+          product.primary_image_url ||
+          (product.image_urls && product.image_urls.length > 0 ? product.image_urls[0] : null) ||
+          product.image_url ||
+          null,
+      })
+    }
+  }
+  return items
+}
+
 export function ProductSearch({ onAddToCart }: ProductSearchProps) {
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedCategory, setSelectedCategory] = useState("All")
   const [allProducts, setAllProducts] = useState<Product[]>([])
-  const [products, setProducts] = useState<Product[]>([])
   const [categories, setCategories] = useState<Array<string | { id: string; name: string }>>(["All"])
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
-  const [showVariantModal, setShowVariantModal] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
-  const { toast } = useToast()
 
   // Fetch all products once
   useEffect(() => {
@@ -100,46 +152,42 @@ export function ProductSearch({ onAddToCart }: ProductSearchProps) {
       .finally(() => setLoading(false))
   }, [searchTerm, selectedCategory])
 
-  // Filter products by search and category
-  const filteredProducts = allProducts.filter((product) => {
+  // Flatten once per product-list change - one entry per variant, so a
+  // product with 40 variants yields 40 independently searchable/addable items.
+  const allItems = useMemo(() => buildSearchItems(allProducts), [allProducts])
+
+  // Filter items by search and category
+  const filteredItems = allItems.filter((item) => {
+    const term = searchTerm.toLowerCase();
+    const product = item.product
     const matchesSearch =
       !searchTerm ||
-      product.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (product.sku || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (typeof product.category === 'string' 
-        ? (product.category || "").toLowerCase().includes(searchTerm.toLowerCase())
-        : ((product.category as any)?.name || "").toLowerCase().includes(searchTerm.toLowerCase())
+      item.name?.toLowerCase().includes(term) ||
+      item.sku.toLowerCase().includes(term) ||
+      // Also match the parent product's own name/SKU, so e.g. searching
+      // "Suture" still surfaces all of its variant cards.
+      product.name?.toLowerCase().includes(term) ||
+      (product.sku || "").toLowerCase().includes(term) ||
+      (typeof product.category === 'string'
+        ? (product.category || "").toLowerCase().includes(term)
+        : ((product.category as any)?.name || "").toLowerCase().includes(term)
       );
-    const matchesCategory = selectedCategory === "All" || 
-      (typeof product.category === 'string' 
+    const matchesCategory = selectedCategory === "All" ||
+      (typeof product.category === 'string'
         ? product.category === selectedCategory
         : (product.category as any)?.id === selectedCategory
       );
     return matchesSearch && matchesCategory;
   });
 
-  // Paginate filtered products
-  const totalCount = filteredProducts.length;
+  // Paginate filtered items
+  const totalCount = filteredItems.length;
   const totalPages = Math.ceil(totalCount / pageSize);
-  const paginatedProducts = filteredProducts.slice((page - 1) * pageSize, page * pageSize);
+  const paginatedItems = filteredItems.slice((page - 1) * pageSize, page * pageSize);
 
-  const handleProductClick = (product: Product) => {
-    if (product.variants && product.variants.length > 0) {
-      setSelectedProduct(product)
-      setShowVariantModal(true)
-    } else {
-      // Remove out-of-stock check: allow adding any product
-      onAddToCart(product)
-    }
-  }
-
-  const handleVariantSelect = (variant: ProductVariant) => {
-    // Remove out-of-stock check: allow adding any variant
-    if (selectedProduct) {
-      onAddToCart(selectedProduct, variant)
-    }
-    setShowVariantModal(false)
-    setSelectedProduct(null)
+  const handleItemClick = (item: SearchItem) => {
+    // Remove out-of-stock check: allow adding any item regardless of stock
+    onAddToCart(item.product, item.variant)
   }
 
   const getStockStatus = (stock: number) => {
@@ -200,31 +248,29 @@ export function ProductSearch({ onAddToCart }: ProductSearchProps) {
         <div className="flex justify-center items-center py-12">Loading products...</div>
       ) : error ? (
         <div className="flex justify-center items-center py-12 text-red-500">{error}</div>
-      ) : paginatedProducts.length === 0 ? (
+      ) : paginatedItems.length === 0 ? (
         <div className="flex justify-center items-center py-12 text-gray-500">No products found.</div>
       ) : (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {paginatedProducts.map((product, index) => {
-              const stockStatus = getStockStatus(product.stock_quantity ?? 0)
+            {paginatedItems.map((item) => {
+              const stockStatus = getStockStatus(item.stock)
+              const priceNum = parseFloat(typeof item.price === "string" ? item.price : String(item.price || "0"))
               return (
                 <Card
-                  key={`product-${product.id}-${index}`}
+                  key={item.key}
                   className="p-4 cursor-pointer hover:shadow-lg transition"
-                  onClick={() => handleProductClick(product)}
+                  onClick={() => handleItemClick(item)}
                 >
                   <div className="flex flex-col items-center">
                     <img
-                      src={product.primary_image_url || (product.image_urls && product.image_urls.length > 0 ? product.image_urls[0] : null) || product.image_url || "/placeholder.svg"}
-                      alt={product.name}
+                      src={item.image || "/placeholder.svg"}
+                      alt={item.name}
                       className="w-24 h-24 object-contain mb-2"
                     />
-                    <div className="font-semibold text-lg text-center">{product.name}</div>
-                    <div className="text-gray-500 text-sm mb-1">{product.sku}</div>
-                    <div className="font-bold text-primary">KES {(() => {
-                      const priceNum = parseFloat(typeof product.price === 'string' ? product.price : String(product.price || "0"));
-                      return !isNaN(priceNum) && priceNum > 0 ? priceNum.toLocaleString() : "N/A";
-                    })()}</div>
+                    <div className="font-semibold text-lg text-center">{item.name}</div>
+                    <div className="text-gray-500 text-sm mb-1">{item.sku}</div>
+                    <div className="font-bold text-primary">KES {!isNaN(priceNum) && priceNum > 0 ? priceNum.toLocaleString() : "N/A"}</div>
                     <Badge variant={stockStatus.color}>{stockStatus.label}</Badge>
                   </div>
                 </Card>
@@ -281,58 +327,6 @@ export function ProductSearch({ onAddToCart }: ProductSearchProps) {
           )}
         </>
       )}
-
-      {/* Variant Modal */}
-      <Dialog open={showVariantModal} onOpenChange={setShowVariantModal}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Select Variant</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2">
-            {selectedProduct?.variants?.map((variant, index) => {
-              // Get variant image - prioritize primary_image_url, then first image from image_urls or images
-              const variantImage = variant.primary_image_url || 
-                                   (variant.image_urls && variant.image_urls.length > 0 ? variant.image_urls[0] : null) ||
-                                   (variant.images && variant.images.length > 0 ? variant.images[0] : null) ||
-                                   "/placeholder.svg"
-              
-              return (
-                <Card
-                  key={`variant-${variant.id}-${index}`}
-                  className="p-4 cursor-pointer hover:shadow-lg transition flex justify-between items-center gap-4"
-                  onClick={() => handleVariantSelect(variant)}
-                >
-                  {/* Variant Image */}
-                  <div className="flex-shrink-0">
-                    <img
-                      src={variantImage}
-                      alt={variant.name}
-                      className="w-16 h-16 object-cover rounded-md border border-gray-200"
-                    />
-                  </div>
-                  
-                  {/* Variant Info */}
-                  <div className="flex-1">
-                    <div className="font-semibold">{variant.name}</div>
-                    <div className="text-gray-500 text-sm">{variant.sku}</div>
-                  </div>
-                  
-                  {/* Price */}
-                  <div className="font-bold text-primary">KES {(() => {
-                    const priceNum = parseFloat(typeof variant.price === 'string' ? variant.price : String(variant.price || "0"));
-                    return !isNaN(priceNum) && priceNum > 0 ? priceNum.toLocaleString() : "N/A";
-                  })()}</div>
-                  
-                  {/* Stock Badge */}
-                  <Badge variant={getStockStatus(variant.stock_quantity ?? 0).color}>
-                    {getStockStatus(variant.stock_quantity ?? 0).label}
-                  </Badge>
-                </Card>
-              )
-            })}
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

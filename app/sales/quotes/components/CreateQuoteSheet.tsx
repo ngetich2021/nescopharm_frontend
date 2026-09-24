@@ -29,6 +29,10 @@ const lineItemSchema = z.object({
   description: z.string().optional(), // Just for display, not sent to API
   quantity: z.number().min(0.01, "Quantity must be at least 0.01"),
   unit_price: z.number().min(0, "Unit price must be non-negative"),
+  // Which named product price tier (e.g. "Hospital Price") this line's price
+  // came from, or "Custom" if hand-typed - internal-only, never printed on
+  // the customer-facing quote.
+  price_label: z.string().optional().nullable(),
 })
 
 const quoteSchema = z.object({
@@ -51,6 +55,7 @@ interface CreateQuoteSheetProps {
 export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetProps) {
   const [customers, setCustomers] = useState<any[]>([])
   const [products, setProducts] = useState<any[]>([])
+  const [productsError, setProductsError] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
   const [productSearchTerm, setProductSearchTerm] = useState("")
   const [productSearchResults, setProductSearchResults] = useState<any[] | null>(null)
@@ -74,7 +79,7 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
       currency: 'KES',
       status: 'pending' as const,
       notes: '',
-      items: [{ product_id: '', description: '', quantity: 1, unit_price: 0 }],
+      items: [{ product_id: '', description: '', quantity: 1, unit_price: 0, price_label: null }],
     }
   })
 
@@ -105,11 +110,21 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
   }
 
   const loadProducts = async () => {
+    setProductsError(null)
     try {
       const productsData = await getProducts(1, 200)
       setProducts(productsData?.data || [])
     } catch (error: any) {
-      // Silently handle product loading errors
+      // Surfaced instead of silently leaving an empty product list - a
+      // blank/failed fetch here otherwise looks identical to "no products
+      // to pick from," including no price-tier dropdown ever showing up.
+      setProducts([])
+      setProductsError(error?.message || "Failed to load products.")
+      toast({
+        title: "Couldn't load products",
+        description: (error?.message || "Failed to load products.") + " Product search and price tiers won't work until this is retried.",
+        variant: "destructive",
+      })
     }
   }
 
@@ -158,6 +173,7 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
       description: '',
       quantity: 1,
       unit_price: 0,
+      price_label: null,
     })
   }
 
@@ -191,8 +207,9 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
         form.setValue(`items.${index}.description`, product.name)
       }
       form.setValue(`items.${index}.unit_price`, parseFloat(item.price || "0"))
+      form.setValue(`items.${index}.price_label`, null)
     }
-    
+
     setShowProductSearch(null)
     setProductSearchTerm("")
   }
@@ -287,7 +304,8 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
           product_id: item.product_id!,
           variant_id: item.variant_id || null,
           quantity: item.quantity,
-          unit_price: item.unit_price.toString()
+          unit_price: item.unit_price.toString(),
+          price_label: item.price_label || null,
         }))
       }
       
@@ -308,7 +326,7 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
         currency: 'KES',
         status: 'pending' as const,
         notes: '',
-        items: [{ product_id: '', description: '', quantity: 1, unit_price: 0 }],
+        items: [{ product_id: '', description: '', quantity: 1, unit_price: 0, price_label: null }],
       })
     } catch (error: any) {
       toast({
@@ -571,6 +589,14 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
                 </Button>
               </CardHeader>
               <CardContent className="space-y-4">
+                {productsError && (
+                  <div className="flex items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                    <span>Products failed to load ({productsError}) - product search and price-tier dropdowns won't work until this succeeds.</span>
+                    <Button type="button" size="sm" variant="outline" onClick={loadProducts}>
+                      Retry
+                    </Button>
+                  </div>
+                )}
                 {/* Column Headers */}
                 <div className="grid grid-cols-12 gap-4 pb-2 border-b">
                   <div className="col-span-5">
@@ -773,12 +799,53 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
                       
                       {/* Unit Price */}
                       <div className="col-span-2">
+                        {(() => {
+                          const productId = form.watch(`items.${index}.product_id`)
+                          const product = products.find(p => p.id === productId)
+                          const tiers = (product as any)?.price_tiers as { tier_name: string; price: number | string }[] | undefined
+                          if (!tiers || tiers.length === 0) return null
+                          return (
+                            <Select
+                              value={form.watch(`items.${index}.price_label`) || ""}
+                              onValueChange={(label) => {
+                                const tier = tiers.find(t => t.tier_name === label)
+                                if (!tier) return
+                                form.setValue(`items.${index}.unit_price`, Number(tier.price))
+                                form.setValue(`items.${index}.price_label`, label)
+                              }}
+                            >
+                              <SelectTrigger className="h-7 text-xs mb-1 px-2">
+                                <SelectValue placeholder="Select price..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {tiers.map((t) => (
+                                  <SelectItem key={t.tier_name} value={t.tier_name} className="text-xs">
+                                    {t.tier_name} — {Number(t.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          )
+                        })()}
                         <Input
                           type="number"
                           step="0.01"
                           min="0"
                           placeholder="0.00"
-                          {...form.register(`items.${index}.unit_price`, { valueAsNumber: true })}
+                          {...form.register(`items.${index}.unit_price`, {
+                            valueAsNumber: true,
+                            onChange: (e) => {
+                              const productId = form.getValues(`items.${index}.product_id`)
+                              const product = products.find(p => p.id === productId)
+                              const tiers = (product as any)?.price_tiers as { tier_name: string; price: number | string }[] | undefined
+                              const label = form.getValues(`items.${index}.price_label`)
+                              const tier = tiers?.find(t => t.tier_name === label)
+                              const typed = parseFloat(e.target.value)
+                              if (!tier || Number(tier.price) !== typed) {
+                                form.setValue(`items.${index}.price_label`, "Custom")
+                              }
+                            },
+                          })}
                           className="h-10 text-sm border-gray-300 focus:border-primary focus:ring-1 focus:ring-primary"
                         />
                         {form.formState.errors.items?.[index]?.unit_price && (

@@ -281,6 +281,7 @@ export function CustomerProfileModal({
               <ApplicationStatusSection
                 customerId={currentCustomer.id}
                 approvalStatus={(currentCustomer as any).approval_status}
+                customer={currentCustomer as any}
                 onRefresh={() => {
                   if (customer?.id) {
                     getCustomerProfile(customer.id).then((profile) => setCustomerProfile(profile));

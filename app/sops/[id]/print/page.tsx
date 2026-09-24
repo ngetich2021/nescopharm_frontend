@@ -119,7 +119,7 @@ export default function SopPrintPage() {
 
   if (isLoading) {
     return (
-      <PermissionGuard permissions={["can_view_finance_menu", "can_manage_system", "can_manage_company"]}>
+      <PermissionGuard permissions={["can_view_sops_menu", "can_view_sops", "can_manage_system", "can_manage_company"]}>
         <div className="flex items-center justify-center h-screen">
           <Loader2 className="h-10 w-10 animate-spin text-primary" />
         </div>
@@ -129,7 +129,7 @@ export default function SopPrintPage() {
 
   if (!printData || error) {
     return (
-      <PermissionGuard permissions={["can_view_finance_menu", "can_manage_system", "can_manage_company"]}>
+      <PermissionGuard permissions={["can_view_sops_menu", "can_view_sops", "can_manage_system", "can_manage_company"]}>
         <div className="max-w-3xl mx-auto py-12 px-4">
           <Card className="p-6">
             <h1 className="text-xl font-semibold mb-2">Unable to load SOP print view</h1>
@@ -149,7 +149,7 @@ export default function SopPrintPage() {
   const { sop, annexures } = printData
 
   return (
-    <PermissionGuard permissions={["can_view_finance_menu", "can_manage_system", "can_manage_company"]}>
+    <PermissionGuard permissions={["can_view_sops_menu", "can_view_sops", "can_manage_system", "can_manage_company"]}>
       <div className="min-h-screen bg-gray-50 print:bg-white">
         <div className="sticky top-0 z-10 bg-white border-b print:hidden">
           <div className="max-w-6xl mx-auto px-4 py-3 flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3">

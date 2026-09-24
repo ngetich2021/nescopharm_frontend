@@ -81,6 +81,7 @@ export function CreateCustomerModal({
   const [contactPersonName, setContactPersonName] = useState("");
   const [contactPersonPhone, setContactPersonPhone] = useState("");
   const [contactPersonEmail, setContactPersonEmail] = useState("");
+  const [contactPersonDesignation, setContactPersonDesignation] = useState("");
 
   // Company Details (Nescopharm "Credit Appraisal Form" fields)
   const [tradingName, setTradingName] = useState("");
@@ -151,6 +152,7 @@ export function CreateCustomerModal({
     setContactPersonName("");
     setContactPersonPhone("");
     setContactPersonEmail("");
+    setContactPersonDesignation("");
 
     // Reset Company Details
     setTradingName("");
@@ -414,6 +416,7 @@ export function CreateCustomerModal({
       currentContactPersonName: contactPersonName,
       currentContactPersonPhone: contactPersonPhone,
       currentContactPersonEmail: contactPersonEmail,
+      currentContactPersonDesignation: contactPersonDesignation,
       currentTradingName: tradingName,
       currentBusinessType: businessType,
       currentRegistrationNumber: registrationNumber,
@@ -454,31 +457,37 @@ export function CreateCustomerModal({
         last_contact_date: null,
         notes: submissionData.currentNotes.trim() || null,
         tags: tagsArray.length > 0 ? tagsArray : null,
-        payment_method: submissionData.currentPaymentMethod,
+        // Sales Reps never see the Payment Method selector above (it's
+        // hidden so selecting "Credit" there can't trigger an immediate
+        // CustomerAccount, bypassing the two-stage approval) - but every rep
+        // submission IS a credit application via the Credit Appraisal form
+        // below, so the stored payment method should say so, not silently
+        // stay at the selector's unused "cash" default.
+        payment_method: isSalesRep ? "credit" : submissionData.currentPaymentMethod,
       };
 
-      // Add company-specific fields if customer is a company
-      if (submissionData.currentCustomerType === "company") {
-        customerData = {
-          ...customerData,
-          business_name: submissionData.currentBusinessName.trim() || null,
-          trading_name: submissionData.currentTradingName.trim() || null,
-          business_type: submissionData.currentBusinessType || null,
-          registration_number: submissionData.currentRegistrationNumber.trim() || null,
-          ppb_license_number: submissionData.currentPpbLicenseNumber.trim() || null,
-          website: submissionData.currentWebsite.trim() || null,
-          telephone: submissionData.currentTelephone.trim() || null,
-          nature_of_business: submissionData.currentNatureOfBusiness.trim() || null,
-          pin_number: submissionData.currentPinNumber.trim() || null,
-          contact_person_name: submissionData.currentContactPersonName.trim() || null,
-          contact_person_phone: submissionData.currentContactPersonPhone.trim() || null,
-          contact_person_email: submissionData.currentContactPersonEmail.trim() || null,
-          accounts_contact_name: submissionData.currentAccountsContactName.trim() || null,
-          accounts_contact_designation: submissionData.currentAccountsContactDesignation.trim() || null,
-          accounts_contact_phone: submissionData.currentAccountsContactPhone.trim() || null,
-          accounts_contact_email: submissionData.currentAccountsContactEmail.trim() || null,
-        };
-      }
+      // Business/company detail fields are optional for individuals but still
+      // captured when filled in - only "company" customers require them.
+      customerData = {
+        ...customerData,
+        business_name: submissionData.currentBusinessName.trim() || null,
+        trading_name: submissionData.currentTradingName.trim() || null,
+        business_type: submissionData.currentBusinessType || null,
+        registration_number: submissionData.currentRegistrationNumber.trim() || null,
+        ppb_license_number: submissionData.currentPpbLicenseNumber.trim() || null,
+        website: submissionData.currentWebsite.trim() || null,
+        telephone: submissionData.currentTelephone.trim() || null,
+        nature_of_business: submissionData.currentNatureOfBusiness.trim() || null,
+        pin_number: submissionData.currentPinNumber.trim() || null,
+        contact_person_name: submissionData.currentContactPersonName.trim() || null,
+        contact_person_phone: submissionData.currentContactPersonPhone.trim() || null,
+        contact_person_email: submissionData.currentContactPersonEmail.trim() || null,
+        contact_person_designation: submissionData.currentContactPersonDesignation.trim() || null,
+        accounts_contact_name: submissionData.currentAccountsContactName.trim() || null,
+        accounts_contact_designation: submissionData.currentAccountsContactDesignation.trim() || null,
+        accounts_contact_phone: submissionData.currentAccountsContactPhone.trim() || null,
+        accounts_contact_email: submissionData.currentAccountsContactEmail.trim() || null,
+      };
 
       // Only Sales Reps submit the paper "Credit Appraisal Form" data - the
       // backend uses its presence (plus the creating user's role) to route
@@ -889,9 +898,14 @@ export function CreateCustomerModal({
                   </Select>
                 </div>
               </div>
-              
-              {customerType === "company" && (
-                <>
+
+              <div className="pt-2 mt-2 border-t">
+                <p className="text-sm font-medium text-muted-foreground mb-3">
+                  Business Details{customerType !== "company" ? " (optional)" : ""}
+                </p>
+              </div>
+
+              <>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="businessName">Business Name</Label>
@@ -918,17 +932,6 @@ export function CreateCustomerModal({
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="natureOfBusiness">Nature of Business</Label>
-                      <Input
-                        id="natureOfBusiness"
-                        value={natureOfBusiness}
-                        onChange={(e) => setNatureOfBusiness(e.target.value)}
-                        placeholder="Retail, Manufacturing, etc."
-                        disabled={isSubmitting || authLoading}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
                       <Label htmlFor="businessType">Business Type</Label>
                       <Select value={businessType || undefined} onValueChange={setBusinessType} disabled={isSubmitting || authLoading}>
                         <SelectTrigger id="businessType">
@@ -942,19 +945,6 @@ export function CreateCustomerModal({
                           <SelectItem value="other">Other</SelectItem>
                         </SelectContent>
                       </Select>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="pinNumber">PIN Number</Label>
-                      <Input
-                        id="pinNumber"
-                        value={pinNumber}
-                        onChange={(e) => setPinNumber(e.target.value)}
-                        placeholder="P123456"
-                        disabled={isSubmitting || authLoading}
-                      />
                     </div>
 
                     <div className="space-y-2">
@@ -982,142 +972,23 @@ export function CreateCustomerModal({
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="telephone">Telephone</Label>
+                      <Label htmlFor="pinNumber">KRA PIN</Label>
                       <Input
-                        id="telephone"
-                        value={telephone}
-                        onChange={(e) => setTelephone(e.target.value)}
-                        placeholder="+254 20 123 4567"
+                        id="pinNumber"
+                        value={pinNumber}
+                        onChange={(e) => setPinNumber(e.target.value)}
+                        placeholder="P123456"
                         disabled={isSubmitting || authLoading}
                       />
                     </div>
                   </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="website">Website</Label>
-                    <Input
-                      id="website"
-                      value={website}
-                      onChange={(e) => setWebsite(e.target.value)}
-                      placeholder="https://www.example.com"
-                      disabled={isSubmitting || authLoading}
-                    />
-                  </div>
-                </>
-              )}
+              </>
             </CardContent>
           </Card>
 
-          {/* Primary Contact */}
-          {customerType === "company" && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <User className="h-5 w-5 text-teal-600" />
-                  Primary Contact
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="contactPersonName">Contact Person Name</Label>
-                    <Input
-                      id="contactPersonName"
-                      value={contactPersonName}
-                      onChange={(e) => setContactPersonName(e.target.value)}
-                      placeholder="Jane Doe"
-                      disabled={isSubmitting || authLoading}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="contactPersonPhone">Contact Person Phone</Label>
-                    <Input
-                      id="contactPersonPhone"
-                      value={contactPersonPhone}
-                      onChange={(e) => setContactPersonPhone(e.target.value)}
-                      placeholder="+254 700 123 456"
-                      disabled={isSubmitting || authLoading}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="contactPersonEmail">Contact Person Email</Label>
-                    <Input
-                      id="contactPersonEmail"
-                      type="email"
-                      value={contactPersonEmail}
-                      onChange={(e) => setContactPersonEmail(e.target.value)}
-                      placeholder="jane.doe@example.com"
-                      disabled={isSubmitting || authLoading}
-                    />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Accounts Contact - a separate contact block from Primary Contact above */}
-          {customerType === "company" && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Phone className="h-5 w-5 text-teal-600" />
-                  Accounts Contact
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="accountsContactName">Name</Label>
-                    <Input
-                      id="accountsContactName"
-                      value={accountsContactName}
-                      onChange={(e) => setAccountsContactName(e.target.value)}
-                      placeholder="John Accountant"
-                      disabled={isSubmitting || authLoading}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="accountsContactDesignation">Designation</Label>
-                    <Input
-                      id="accountsContactDesignation"
-                      value={accountsContactDesignation}
-                      onChange={(e) => setAccountsContactDesignation(e.target.value)}
-                      placeholder="Finance Manager"
-                      disabled={isSubmitting || authLoading}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="accountsContactPhone">Phone</Label>
-                    <Input
-                      id="accountsContactPhone"
-                      value={accountsContactPhone}
-                      onChange={(e) => setAccountsContactPhone(e.target.value)}
-                      placeholder="+254 700 123 456"
-                      disabled={isSubmitting || authLoading}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="accountsContactEmail">Email</Label>
-                    <Input
-                      id="accountsContactEmail"
-                      type="email"
-                      value={accountsContactEmail}
-                      onChange={(e) => setAccountsContactEmail(e.target.value)}
-                      placeholder="accounts@example.com"
-                      disabled={isSubmitting || authLoading}
-                    />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Address Information */}
+          {/* Address Information - comes right after Company Details to match
+              the reference Credit Appraisal Form's Postal/Physical Address
+              placement (between KRA PIN and Telephone). */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -1127,7 +998,19 @@ export function CreateCustomerModal({
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="address">Street Address</Label>
+                <Label htmlFor="postalCode">Postal Address (P.O. Box)</Label>
+                <Input
+                  id="postalCode"
+                  value={postalCode}
+                  onChange={(e) => setPostalCode(e.target.value)}
+                  placeholder="00100"
+                  disabled={isSubmitting || authLoading}
+                  className="w-full md:w-1/3"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="address">Physical Address</Label>
                 <Input
                   id="address"
                   value={address}
@@ -1136,10 +1019,10 @@ export function CreateCustomerModal({
                   disabled={isSubmitting || authLoading}
                 />
               </div>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="city">City</Label>
+                  <Label htmlFor="city">Town</Label>
                   <Input
                     id="city"
                     value={city}
@@ -1224,20 +1107,170 @@ export function CreateCustomerModal({
                   </Popover>
                 </div>
               </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="postalCode">Postal Code</Label>
-                <Input
-                  id="postalCode"
-                  value={postalCode}
-                  onChange={(e) => setPostalCode(e.target.value)}
-                  placeholder="00100"
-                  disabled={isSubmitting || authLoading}
-                  className="w-full md:w-1/3"
-                />
-              </div>
             </CardContent>
           </Card>
+
+          {/* Telephone / Website / Nature of Business */}
+          <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Phone className="h-5 w-5 text-teal-600" />
+                  Contact Details{customerType !== "company" ? " (optional)" : ""}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="telephone">Telephone</Label>
+                    <Input
+                      id="telephone"
+                      value={telephone}
+                      onChange={(e) => setTelephone(e.target.value)}
+                      placeholder="+254 20 123 4567"
+                      disabled={isSubmitting || authLoading}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="website">Website (if any)</Label>
+                    <Input
+                      id="website"
+                      value={website}
+                      onChange={(e) => setWebsite(e.target.value)}
+                      placeholder="https://www.example.com"
+                      disabled={isSubmitting || authLoading}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="natureOfBusiness">Nature of Business</Label>
+                  <Input
+                    id="natureOfBusiness"
+                    value={natureOfBusiness}
+                    onChange={(e) => setNatureOfBusiness(e.target.value)}
+                    placeholder="Retail, Manufacturing, etc."
+                    disabled={isSubmitting || authLoading}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+          {/* Primary Contact */}
+          <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <User className="h-5 w-5 text-teal-600" />
+                  Primary Contact (Procurement Officer/Pharmacist-in-Charge){customerType !== "company" ? " (optional)" : ""}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="contactPersonName">Contact Person Name</Label>
+                    <Input
+                      id="contactPersonName"
+                      value={contactPersonName}
+                      onChange={(e) => setContactPersonName(e.target.value)}
+                      placeholder="Jane Doe"
+                      disabled={isSubmitting || authLoading}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="contactPersonDesignation">Designation</Label>
+                    <Input
+                      id="contactPersonDesignation"
+                      value={contactPersonDesignation}
+                      onChange={(e) => setContactPersonDesignation(e.target.value)}
+                      placeholder="Pharmacist-in-Charge"
+                      disabled={isSubmitting || authLoading}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="contactPersonPhone">Contact Person Phone</Label>
+                    <Input
+                      id="contactPersonPhone"
+                      value={contactPersonPhone}
+                      onChange={(e) => setContactPersonPhone(e.target.value)}
+                      placeholder="+254 700 123 456"
+                      disabled={isSubmitting || authLoading}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="contactPersonEmail">Contact Person Email</Label>
+                    <Input
+                      id="contactPersonEmail"
+                      type="email"
+                      value={contactPersonEmail}
+                      onChange={(e) => setContactPersonEmail(e.target.value)}
+                      placeholder="jane.doe@example.com"
+                      disabled={isSubmitting || authLoading}
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+          {/* Accounts Contact - a separate contact block from Primary Contact above */}
+          <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Phone className="h-5 w-5 text-teal-600" />
+                  Accounts Contact{customerType !== "company" ? " (optional)" : ""}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="accountsContactName">Name</Label>
+                    <Input
+                      id="accountsContactName"
+                      value={accountsContactName}
+                      onChange={(e) => setAccountsContactName(e.target.value)}
+                      placeholder="John Accountant"
+                      disabled={isSubmitting || authLoading}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="accountsContactDesignation">Designation</Label>
+                    <Input
+                      id="accountsContactDesignation"
+                      value={accountsContactDesignation}
+                      onChange={(e) => setAccountsContactDesignation(e.target.value)}
+                      placeholder="Finance Manager"
+                      disabled={isSubmitting || authLoading}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="accountsContactPhone">Phone</Label>
+                    <Input
+                      id="accountsContactPhone"
+                      value={accountsContactPhone}
+                      onChange={(e) => setAccountsContactPhone(e.target.value)}
+                      placeholder="+254 700 123 456"
+                      disabled={isSubmitting || authLoading}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="accountsContactEmail">Email</Label>
+                    <Input
+                      id="accountsContactEmail"
+                      type="email"
+                      value={accountsContactEmail}
+                      onChange={(e) => setAccountsContactEmail(e.target.value)}
+                      placeholder="accounts@example.com"
+                      disabled={isSubmitting || authLoading}
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
           {/*
             Payment Method / immediate credit-account setup - Sales Reps must

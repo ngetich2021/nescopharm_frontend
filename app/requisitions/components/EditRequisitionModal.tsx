@@ -38,7 +38,8 @@ interface Product {
 
 interface EditRequisitionItem {
   id?: string;
-  product_id: string;
+  product_id?: string;
+  custom_item_name?: string;
   variant_id?: string;
   quantity: number;
   notes?: string;
@@ -64,6 +65,7 @@ export function EditRequisitionModal({ open, onOpenChange, onSuccess, requisitio
   const [products, setProducts] = useState<LibProduct[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [customItemInput, setCustomItemInput] = useState("");
   const { toast } = useToast();
 
   const [formData, setFormData] = useState<FormData>({
@@ -82,11 +84,12 @@ export function EditRequisitionModal({ open, onOpenChange, onSuccess, requisitio
         notes: requisition.notes || "",
         items: requisition.items.map(item => ({
           id: item.id,
-          product_id: item.product_id,
+          product_id: item.product_id || undefined,
+          custom_item_name: item.custom_item_name || undefined,
           variant_id: item.variant_id || undefined,
           quantity: item.quantity,
           notes: item.notes || "",
-          product: item.product,
+          product: item.product || undefined,
           variant: item.variant
         }))
       });
@@ -110,6 +113,7 @@ export function EditRequisitionModal({ open, onOpenChange, onSuccess, requisitio
       });
       setErrors({});
       setSearchQuery("");
+      setCustomItemInput("");
     }
   }, [open]);
 
@@ -117,7 +121,9 @@ export function EditRequisitionModal({ open, onOpenChange, onSuccess, requisitio
     try {
       const [productsResponse, usersData] = await Promise.all([
         getProducts(1, 100),
-        getUsers()
+        // Only users who can actually approve a requisition (e.g. GM/Directors)
+        // should show up as approver options.
+        getUsers({ role_scope: "can_approve_requisitions" })
       ]);
       setProducts(productsResponse.data || []);
       setUsers(usersData);
@@ -156,6 +162,19 @@ export function EditRequisitionModal({ open, onOpenChange, onSuccess, requisitio
       };
       setFormData({ ...formData, items: [...formData.items, newItem] });
     }
+    setSearchQuery("");
+  };
+
+  const addCustomItem = (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+
+    const newItem: EditRequisitionItem = {
+      custom_item_name: trimmed,
+      quantity: 1,
+      notes: "",
+    };
+    setFormData({ ...formData, items: [...formData.items, newItem] });
     setSearchQuery("");
   };
 
@@ -209,7 +228,8 @@ export function EditRequisitionModal({ open, onOpenChange, onSuccess, requisitio
         notes: formData.notes || undefined,
         items: formData.items.map(item => ({
           id: item.id,
-          product_id: item.product_id,
+          product_id: item.product_id || undefined,
+          custom_item_name: item.custom_item_name || undefined,
           variant_id: item.variant_id || undefined,
           quantity: item.quantity,
           notes: item.notes || undefined,
@@ -337,6 +357,35 @@ export function EditRequisitionModal({ open, onOpenChange, onSuccess, requisitio
                   />
                 </div>
 
+                {/* Not in the catalog? Add it as a plain named item - it's never saved as a Product */}
+                <div className="flex items-center gap-2">
+                  <Input
+                    placeholder="Not in the list? Type an item name, e.g. Laptop"
+                    value={customItemInput}
+                    onChange={(e) => setCustomItemInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        addCustomItem(customItemInput);
+                        setCustomItemInput("");
+                      }
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={!customItemInput.trim()}
+                    onClick={() => {
+                      addCustomItem(customItemInput);
+                      setCustomItemInput("");
+                    }}
+                  >
+                    <Plus className="h-4 w-4 mr-1" />
+                    Add Item
+                  </Button>
+                </div>
+
                 {/* Product Search Results */}
                 {searchQuery && (
                   <div className="max-h-60 overflow-y-auto border rounded-md">
@@ -414,7 +463,8 @@ export function EditRequisitionModal({ open, onOpenChange, onSuccess, requisitio
                       </div>
                     ) : (
                       <div className="p-4 text-center text-gray-500 text-sm">
-                        No products found matching "{searchQuery}"
+                        No products found matching "{searchQuery}". Use the field above to add it as a
+                        plain item instead.
                       </div>
                     )}
                   </div>
@@ -451,19 +501,29 @@ export function EditRequisitionModal({ open, onOpenChange, onSuccess, requisitio
                     {formData.items.map((item, index) => {
                       const product = item.product;
                       const variant = item.variant;
+                      const isCustom = !product;
                       const availableStock = variant ? variant.stock_quantity : product?.stock_quantity || 0;
-                      
+
                       return (
-                        <div key={`${item.product_id}-${item.variant_id || 'no-variant'}-${index}`} className="border rounded-lg p-4">
+                        <div key={`${item.product_id || item.custom_item_name}-${item.variant_id || 'no-variant'}-${index}`} className="border rounded-lg p-4">
                           <div className="flex items-start justify-between mb-4">
                             <div>
-                              <h4 className="font-medium">{product?.name}</h4>
+                              <div className="flex items-center gap-2">
+                                <h4 className="font-medium">{product?.name || item.custom_item_name}</h4>
+                                {isCustom && (
+                                  <Badge variant="secondary" className="text-xs">Custom item</Badge>
+                                )}
+                              </div>
                               {variant && (
                                 <p className="text-sm text-gray-600">Variant: {variant.name}</p>
                               )}
-                              <p className="text-xs text-gray-500">
-                                Available: {availableStock} {product?.unit_of_measurement}
-                              </p>
+                              {isCustom ? (
+                                <p className="text-xs text-gray-500">Not in the product catalog - to be sourced manually</p>
+                              ) : (
+                                <p className="text-xs text-gray-500">
+                                  Available: {availableStock} {product?.unit_of_measurement}
+                                </p>
+                              )}
                             </div>
                             <Button
                               variant="ghost"
