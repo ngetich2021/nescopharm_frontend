@@ -80,8 +80,13 @@ export interface SopComment {
   comment_type: CommentType
   comment: string
   commented_by: string
+  commented_by_name?: string
   commented_by_user?: UserLite
   created_at: string
+  file_path?: string | null
+  file_name?: string | null
+  file_type?: string | null
+  file_size?: number | null
 }
 
 export interface SopPrintData {

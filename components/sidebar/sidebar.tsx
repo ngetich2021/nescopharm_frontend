@@ -83,8 +83,8 @@ function Sidebar() {
     if (path === "/finance") {
       // Finance should only be active for /finance root and finance-specific routes
       // but NOT for HR routes
-      return pathname === "/finance" || 
-             (pathname.startsWith("/finance/") && 
+      return pathname === "/finance" ||
+             (pathname.startsWith("/finance/") &&
               !pathname.startsWith("/hr/"))
     }
     // For HR & Payroll, check if we're on HR routes
@@ -116,7 +116,7 @@ function Sidebar() {
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard, permission: "can_view_dashboard_menu" },
     { name: "CRM", href: "/customers", icon: Users, permission: "can_view_customers_menu" },
     // { name: "Logistics", href: "/logistics", icon: Truck, permission: "can_view_logistics_menu" },
-    { name: "Dispatch", href: "/dispatch", icon: Truck, permission: "can_view_dispatch_menu" },
+    { name: "Dispatch", href: "/dispatch", icon: Truck, permission: "can_view_inventory_menu" },
     { name: "Requisitions", href: "/requisitions", icon: ClipboardList, permission: "can_view_requisitions_menu" },
     // { name: "Breakages", href: "/breakages", icon: AlertTriangle, permission: "can_view_breakages_menu" },
     // { name: "Repairs", href: "/repairs", icon: Wrench, permission: "can_view_repairs_menu" },
@@ -175,6 +175,7 @@ function Sidebar() {
     { name: "Leave Management", href: "/hr/leave-management", icon: ClipboardList, permission: "can_view_leave_management_menu" },
     { name: "Salary Advance", href: "/hr/salary-advance", icon: CreditCard, permission: "can_view_salary_advance_menu" },
     { name: "Time Management", href: "/hr/time-management", icon: Clock, permission: "can_view_time_management_menu" },
+    { name: "Daily Reports", href: "/hr/daily-reports", icon: FileText, permission: "can_view_daily_reports_menu" },
   ]
 
   if (authLoading) {

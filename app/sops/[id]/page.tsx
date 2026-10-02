@@ -93,7 +93,9 @@ import {
   Save,
   Trash2,
   User,
+  Wrench,
 } from "lucide-react"
+import { CapaTab } from "@/app/sops/components/capa-tab"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -414,7 +416,8 @@ export default function SopDetailPage() {
       setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
     } catch (error: any) {
       if (previewWindow && !previewWindow.closed) previewWindow.close()
-      toast({ title: "Document view failed", description: getErrorMessage(error), variant: "destructive" })
+      console.error("Document view error:", error)
+      toast({ title: "Cannot view document", description: "The document may not be available. Try downloading instead.", variant: "destructive" })
     } finally {
       setIsViewingDocument(false)
     }
@@ -1012,6 +1015,10 @@ export default function SopDetailPage() {
               <MessageSquare className="h-3.5 w-3.5" />
               Comments ({comments.length})
             </TabsTrigger>
+            <TabsTrigger value="capas" className="gap-1.5">
+              <Wrench className="h-3.5 w-3.5" />
+              CAPA ({comments.filter(c => c.comment_type === 'capa').length})
+            </TabsTrigger>
           </TabsList>
 
           {/* ---- Annexures Tab ---- */}
@@ -1286,6 +1293,68 @@ export default function SopDetailPage() {
                 </CardContent>
               </Card>
             </div>
+          </TabsContent>
+
+          {/* ---- CAPA Tab ---- */}
+          <TabsContent value="capas">
+            <CapaTab
+              sopId={sopId}
+              capas={comments}
+              loading={false}
+              onAddCapa={async (comment, file) => {
+                const formData = new FormData()
+                formData.append('comment', comment)
+                formData.append('comment_type', 'capa')
+                if (file) {
+                  formData.append('file', file)
+                }
+
+                const response = await fetch(`/api/sops/${sopId}/comments`, {
+                  method: 'POST',
+                  body: formData,
+                })
+
+                if (!response.ok) {
+                  throw new Error('Failed to create CAPA')
+                }
+
+                const data = await response.json()
+                setComments((cur) => [data.data, ...cur])
+              }}
+              onDeleteCapa={async (capaId) => {
+                await handleDeleteComment(capaId)
+              }}
+              onDownloadFile={async (capaId, fileName) => {
+                try {
+                  const response = await fetch(`/api/sops/${sopId}/comments/${capaId}/download`)
+                  if (!response.ok) {
+                    toast({
+                      title: "Error",
+                      description: "Failed to download file",
+                      variant: "destructive",
+                    })
+                    return
+                  }
+
+                  const blob = await response.blob()
+                  const url = window.URL.createObjectURL(blob)
+                  const link = document.createElement('a')
+                  link.href = url
+                  link.download = fileName || 'capa-document'
+                  document.body.appendChild(link)
+                  link.click()
+                  document.body.removeChild(link)
+                  window.URL.revokeObjectURL(url)
+                } catch (error) {
+                  console.error('Download error:', error)
+                  toast({
+                    title: "Error",
+                    description: "Failed to download file",
+                    variant: "destructive",
+                  })
+                }
+              }}
+            />
           </TabsContent>
         </Tabs>
       </div>

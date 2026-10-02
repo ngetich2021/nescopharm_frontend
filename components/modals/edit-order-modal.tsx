@@ -12,8 +12,8 @@ import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { Switch } from "@/components/ui/switch"
 import { Plus, Search, ShoppingCart, Trash2, X, Edit, Wallet, CreditCard as CreditCardIcon } from "lucide-react"
+import { DEFAULT_PRICE_CODE, priceOptionsFor } from "@/lib/price-codes"
 import { getCreditOverage, coversOverage } from "@/lib/credit-overage"
 import { createPayment } from "@/lib/payments"
 import { CreditOveragePrompt } from "@/components/credit-overage-prompt"
@@ -24,8 +24,27 @@ import apiCall from "@/lib/api"
 import { Product, ProductVariant, getProducts } from "@/lib/products"
 import { getCustomers, Customer as LibCustomer, fetchCustomerCreditTerms, CustomerCreditTerms, getCustomerDisplayName } from "@/lib/customers"
 import { OrderDetail } from "@/lib/orders"
+import { orderTotals, vatRateForProduct } from "@/lib/invoice-tax"
 
 type Customer = LibCustomer
+
+// The API's allowed values. Older orders carry values outside this set
+// (e.g. "pending", null), which the update endpoint rejects, so anything
+// unrecognized is re-derived from what's actually been paid.
+const ORDER_STATUSES = ["pending", "processing", "completed", "cancelled"]
+const PAYMENT_STATUSES = ["unpaid", "partial", "paid"]
+
+function normalizePaymentStatus(
+  stored: string | null | undefined,
+  amountPaid: string | null | undefined,
+  finalAmount: string | null | undefined,
+): string {
+  if (stored && PAYMENT_STATUSES.includes(stored)) return stored
+  const paid = parseFloat(amountPaid || "0")
+  const total = parseFloat(finalAmount || "0")
+  if (paid <= 0) return "unpaid"
+  return total > 0 && paid >= total ? "paid" : "partial"
+}
 
 type OrderItem = {
   id?: string
@@ -34,6 +53,7 @@ type OrderItem = {
   quantity: number
   unit_price: number
   total_price: number
+  tax_rate: number
   variant_id?: string
   variant_name?: string | null
   // Which named product price tier (e.g. "Hospital Price") this line's price
@@ -63,8 +83,6 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
   const [orderItems, setOrderItems] = useState<OrderItem[]>([])
   const [notes, setNotes] = useState("")
-  const [includeTax, setIncludeTax] = useState(true)
-  const [taxRate, setTaxRate] = useState(16) // 16% default tax rate
   const [searchQuery, setSearchQuery] = useState("")
   const [productSearchQuery, setProductSearchQuery] = useState("")
   const [openProductDropdown, setOpenProductDropdown] = useState(false)
@@ -77,8 +95,8 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
 
   // Order specific fields
   const [trackingNumber, setTrackingNumber] = useState("")
-  const [status, setStatus] = useState("Pending")
-  const [paymentStatus, setPaymentStatus] = useState("Unpaid")
+  const [status, setStatus] = useState("pending")
+  const [paymentStatus, setPaymentStatus] = useState("unpaid")
   const [amountPaid, setAmountPaid] = useState(0)
   // What the order already had paid when this modal opened, so editing an
   // already-settled order doesn't demand a fresh payment method for money
@@ -174,17 +192,20 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
         quantity: item.quantity,
         unit_price: parseFloat(item.unit_price),
         total_price: parseFloat(item.total_price),
+        tax_rate: vatRateForProduct(item.product as any),
         variant_id: item.variant_id || undefined,
         variant_name: item.variant_name || undefined
       }))
       setOrderItems(items)
-      
-      // Set other fields
+
+      // Stored discount is a Ksh amount; the form edits it as a percentage.
+      const itemsSubtotal = items.reduce((sum, item) => sum + item.total_price, 0)
+      const storedDiscount = parseFloat(order.discount || "0")
       setNotes(order.notes || "")
-      setDiscount(parseFloat(order.discount || "0"))
+      setDiscount(itemsSubtotal > 0 ? (storedDiscount / itemsSubtotal) * 100 : 0)
       setTrackingNumber(order.tracking_number || "")
-      setStatus(order.status.charAt(0).toUpperCase() + order.status.slice(1)) // Capitalize first letter
-      setPaymentStatus(order.payment_status.charAt(0).toUpperCase() + order.payment_status.slice(1))
+      setStatus(ORDER_STATUSES.includes(order.status) ? order.status : "pending")
+      setPaymentStatus(normalizePaymentStatus(order.payment_status, order.amount_paid, order.final_amount))
       setPaymentOption(order.payment_type === 'credit' ? 'credit' : 'instant')
       setAmountPaid(parseFloat(order.amount_paid || "0"))
       setInitialAmountPaid(parseFloat(order.amount_paid || "0"))
@@ -285,8 +306,9 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
         product_name: product.name,
         quantity: 1,
         unit_price: unitPrice,
-        price_label: null,
+        price_label: DEFAULT_PRICE_CODE,
         total_price: unitPrice,
+        tax_rate: vatRateForProduct(product),
         ...(variantId ? { variant_id: variantId } : {}),
       }
       setOrderItems([
@@ -302,9 +324,11 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
   }
 
   const handleSelectVariant = (productId: string, variantId: string, orderItemIndex: number) => {
+    const product = products.find((p) => p.id === productId)
+    const variant = product?.variants?.find((v) => v.id.toString() === variantId)
     setOrderItems((items) =>
       items.map((item, idx) =>
-        idx === orderItemIndex ? { ...item, variant_id: variantId } : item
+        idx === orderItemIndex ? { ...item, variant_id: variantId, variant_name: variant?.name || item.variant_name } : item
       )
     )
     setSelectedVariants((prev) => {
@@ -336,20 +360,8 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
     setOrderItems(orderItems.filter((_, i) => i !== index))
   }
 
-  const calculateSubtotal = () => {
-    return orderItems.reduce((sum, item) => sum + item.total_price, 0)
-  }
-
-  const calculateTax = () => {
-    return includeTax ? calculateSubtotal() * (taxRate / 100) : 0
-  }
-
-  const calculateTotal = () => {
-    const subtotal = calculateSubtotal()
-    const tax = calculateTax()
-    const discountAmount = (discount / 100) * subtotal
-    return subtotal + tax - discountAmount
-  }
+  const totals = orderTotals(orderItems, discount)
+  const calculateTotal = () => totals.total
 
   const creditOverage = paymentOption === 'credit' && creditTerms?.credit_days
     ? getCreditOverage(calculateTotal(), creditTerms.available_credit)
@@ -399,19 +411,16 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
       // Use the first company as store_id (adjust if you have a separate store selector)
       const storeId = companies.length > 0 ? companies[0].id : null
       
-      // Calculate tax amount
-      const taxAmount = calculateTax()
-      
       // Prepare the payload for updating the order
       const payload = {
         customer_id: selectedCustomer.id,
         store_id: storeId,
-        status: status.toLowerCase(),
-        payment_status: paymentStatus.toLowerCase(),
+        status,
+        payment_status: paymentStatus,
         payment_type: paymentOption === 'credit' ? 'credit' : 'cash',
         amount_paid: amountPaid || undefined,
-        discount,
-        tax: taxAmount,
+        discount: totals.discount,
+        tax: totals.tax,
         currency: "KES",
         notes,
         items: orderItems.map((item) => ({
@@ -751,6 +760,9 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
                           Quantity
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          VAT
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                           Total
                         </th>
                         <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider"></th>
@@ -759,7 +771,7 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
                           const product = products.find((p) => p.id === item.product_id)
                           return product && Array.isArray(product.variants) && product.variants.length > 0
                         }) && (
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Variation</th>
+                          <th className="sticky right-0 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50 z-10">Variation</th>
                         )}
                       </tr>
                     </thead>
@@ -778,23 +790,24 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               {(() => {
-                                const tiers = (product as any)?.price_tiers as { tier_name: string; price: number | string }[] | undefined
-                                if (!tiers || tiers.length === 0) return null
+                                const variant = (product as any)?.variants?.find((v: any) => v.id === item.variant_id)
+                                const options = priceOptionsFor(product, variant)
+                                if (options.length === 0) return null
                                 return (
                                   <Select
                                     value={item.price_label || ""}
-                                    onValueChange={(label) => {
-                                      const tier = tiers.find(t => t.tier_name === label)
-                                      if (tier) handleUpdatePrice(index, Number(tier.price), label)
+                                    onValueChange={(code) => {
+                                      const option = options.find(o => o.code === code)
+                                      if (option) handleUpdatePrice(index, option.price, code)
                                     }}
                                   >
                                     <SelectTrigger className="h-7 w-24 text-xs mb-1 px-2">
                                       <SelectValue placeholder="Price..." />
                                     </SelectTrigger>
                                     <SelectContent>
-                                      {tiers.map((t) => (
-                                        <SelectItem key={t.tier_name} value={t.tier_name} className="text-xs">
-                                          {t.tier_name} — {Number(t.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                      {options.map((o) => (
+                                        <SelectItem key={o.code} value={o.code} className="text-xs">
+                                          {o.code} — {o.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                         </SelectItem>
                                       ))}
                                     </SelectContent>
@@ -827,6 +840,9 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
                               </div>
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
+                              <div className="text-sm text-gray-900">{item.tax_rate > 0 ? `${item.tax_rate}%` : "—"}</div>
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
                               <div className="text-sm text-gray-900">Ksh. {item.total_price.toFixed(2)}</div>
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap text-right">
@@ -834,25 +850,33 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
                                 <Trash2 className="h-4 w-4 text-red-500" />
                               </Button>
                             </td>
-                            {variants.length > 0 && (
-                              <td className="px-4 py-3 whitespace-nowrap">
-                                <Select
-                                  value={selectedVariants[itemKey] || item.variant_id || ""}
-                                  onValueChange={(value) => handleSelectVariant(item.product_id, value, index)}
-                                >
-                                  <SelectTrigger className="w-[120px]">
-                                    <SelectValue placeholder="Select variant" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {variants.map((variant: ProductVariant) => (
-                                      <SelectItem key={variant.id} value={variant.id.toString()}>
-                                        {variant.name}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </td>
-                            )}
+                            {variants.length > 0 && (() => {
+                              const currentVariantId = selectedVariants[itemKey] || item.variant_id || ""
+                              const currentVariant = variants.find((v) => v.id.toString() === currentVariantId.toString())
+                              const displayName = currentVariant?.name || item.variant_name || "No variant selected"
+                              return (
+                                <td className="sticky right-0 px-4 py-3 bg-white z-10 align-top">
+                                  <div className="mb-1 max-w-[220px] whitespace-normal break-words text-sm font-medium text-gray-900">
+                                    {displayName}
+                                  </div>
+                                  <Select
+                                    value={currentVariantId}
+                                    onValueChange={(value) => handleSelectVariant(item.product_id, value, index)}
+                                  >
+                                    <SelectTrigger className="w-full max-w-[200px]">
+                                      <SelectValue placeholder="Select variant" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {variants.map((variant: ProductVariant) => (
+                                        <SelectItem key={variant.id} value={variant.id.toString()}>
+                                          {variant.name}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </td>
+                              )
+                            })()}
                           </tr>
                         )
                       })}
@@ -862,35 +886,8 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
 
                 <div className="border rounded-md p-4 space-y-4">
                   <div className="flex justify-between items-center">
-                    <span className="text-sm">Subtotal:</span>
-                    <span className="font-medium">Ksh. {calculateSubtotal().toFixed(2)}</span>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <Switch id="tax-toggle" checked={includeTax} onCheckedChange={setIncludeTax} />
-                      <Label htmlFor="tax-toggle">Include Tax</Label>
-                    </div>
-
-                    {includeTax && (
-                      <div className="flex items-center space-x-2">
-                        <Select
-                          value={taxRate.toString()}
-                          onValueChange={(value) => setTaxRate(Number.parseInt(value))}
-                        >
-                          <SelectTrigger className="w-[100px]">
-                            <SelectValue placeholder="Tax Rate" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="16">16%</SelectItem>
-                            <SelectItem value="8">8%</SelectItem>
-                            <SelectItem value="5">5%</SelectItem>
-                            <SelectItem value="0">0%</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <span className="font-medium">Ksh. {calculateTax().toFixed(2)}</span>
-                      </div>
-                    )}
+                    <span className="text-sm">Subtotal (excl. VAT):</span>
+                    <span className="font-medium">Ksh. {totals.subtotal.toFixed(2)}</span>
                   </div>
 
                   <div className="flex justify-between items-center">
@@ -906,13 +903,23 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
                         className="w-[80px]"
                       />
                     </div>
-                    <span className="font-medium">-Ksh. {((discount / 100) * calculateSubtotal()).toFixed(2)}</span>
+                    <span className="font-medium">-Ksh. {totals.discount.toFixed(2)}</span>
+                  </div>
+
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm">
+                      VAT
+                      <span className="text-xs text-gray-500 ml-1">
+                        ({orderItems.some(i => i.tax_rate > 0) ? "on VATable items only" : "no VATable items"})
+                      </span>
+                    </span>
+                    <span className="font-medium">Ksh. {totals.tax.toFixed(2)}</span>
                   </div>
 
                   <div className="pt-2 border-t">
                     <div className="flex justify-between items-center">
-                      <span className="font-medium">Total:</span>
-                      <span className="text-lg font-bold">Ksh. {calculateTotal().toFixed(2)}</span>
+                      <span className="font-medium">Total (incl. VAT):</span>
+                      <span className="text-lg font-bold">Ksh. {totals.total.toFixed(2)}</span>
                     </div>
                   </div>
                 </div>
@@ -1009,10 +1016,10 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
                     <SelectValue placeholder="Select status" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Pending">Pending</SelectItem>
-                    <SelectItem value="Processing">Processing</SelectItem>
-                    <SelectItem value="Completed">Completed</SelectItem>
-                    <SelectItem value="Cancelled">Cancelled</SelectItem>
+                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="processing">Processing</SelectItem>
+                    <SelectItem value="completed">Completed</SelectItem>
+                    <SelectItem value="cancelled">Cancelled</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1024,10 +1031,9 @@ export function EditOrderModal({ order, open, onOpenChange, onOrderUpdated }: Ed
                     <SelectValue placeholder="Select payment status" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Unpaid">Unpaid</SelectItem>
-                    <SelectItem value="Partially Paid">Partially Paid</SelectItem>
-                    <SelectItem value="Paid">Paid</SelectItem>
-                    <SelectItem value="Refunded">Refunded</SelectItem>
+                    <SelectItem value="unpaid">Unpaid</SelectItem>
+                    <SelectItem value="partial">Partially Paid</SelectItem>
+                    <SelectItem value="paid">Paid</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

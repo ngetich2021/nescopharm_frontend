@@ -957,6 +957,7 @@ export default function InvoiceDetailPage() {
                     <table className="w-full min-w-[500px]">
                       <thead>
                         <tr className="border-b-2 border-gray-300">
+                          <th className="text-left py-3 text-xs lg:text-sm font-semibold">Item Code</th>
                           <th className="text-left py-3 text-xs lg:text-sm font-semibold">Item Description</th>
                           <th className="text-center py-3 text-xs lg:text-sm font-semibold">Quantity</th>
                           <th className="text-right py-3 text-xs lg:text-sm font-semibold">Unit Price</th>
@@ -964,16 +965,30 @@ export default function InvoiceDetailPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {invoice.line_items.map((item, index) => (
-                          <tr key={item.id} className="border-b border-gray-200">
-                            <td className="py-3 text-xs lg:text-sm pr-4">{item.description}</td>
-                            <td className="text-center py-3 text-xs lg:text-sm">{item.quantity}</td>
-                            <td className="text-right py-3 text-xs lg:text-sm">{formatCurrency(item.unit_price)}</td>
-                            <td className="text-right py-3 text-xs lg:text-sm font-medium">
-                              {item.line_total ? formatCurrency(item.line_total) : formatCurrency(0)}
-                            </td>
-                          </tr>
-                        ))}
+                        {invoice.line_items.map((item) => {
+                          const vatRate = parseFloat((item.tax_rate ?? 0).toString())
+                          const unitPriceInclVat = parseFloat(item.unit_price.toString()) * (1 + vatRate / 100)
+                          return (
+                            <tr key={item.id} className="border-b border-gray-200">
+                              <td className="py-3 text-xs lg:text-sm pr-4 font-mono whitespace-nowrap">
+                                {item.variant?.sku || item.product?.product_code || item.product?.sku || "—"}
+                              </td>
+                              <td className="py-3 text-xs lg:text-sm pr-4">
+                                <div>{item.description}</div>
+                                {vatRate > 0 && (
+                                  <span className="inline-block mt-0.5 border border-gray-500 px-1 text-[10px] font-semibold text-gray-700">
+                                    VAT {vatRate}% inclusive
+                                  </span>
+                                )}
+                              </td>
+                              <td className="text-center py-3 text-xs lg:text-sm">{item.quantity}</td>
+                              <td className="text-right py-3 text-xs lg:text-sm">{formatCurrency(unitPriceInclVat)}</td>
+                              <td className="text-right py-3 text-xs lg:text-sm font-medium">
+                                {formatCurrency(parseFloat(item.quantity.toString()) * unitPriceInclVat)}
+                              </td>
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
                   ) : (
@@ -991,16 +1006,16 @@ export default function InvoiceDetailPage() {
                         <span>Subtotal</span>
                         <span>{formatCurrency(invoice.subtotal)}</span>
                       </div>
-                      <div className="flex justify-between">
-                        <span>Tax ({parseFloat(invoice.tax_amount.toString()) > 0 ? Math.round((parseFloat(invoice.tax_amount.toString()) / parseFloat(invoice.subtotal.toString())) * 100) : 0}%)</span>
-                        <span>{formatCurrency(invoice.tax_amount)}</span>
-                      </div>
                       {parseFloat(invoice.discount_amount.toString()) > 0 && (
                         <div className="flex justify-between">
                           <span>Discount</span>
                           <span>-{formatCurrency(invoice.discount_amount)}</span>
                         </div>
                       )}
+                      <div className="flex justify-between">
+                        <span>VAT</span>
+                        <span>{formatCurrency(invoice.tax_amount)}</span>
+                      </div>
                       <div className="border-t pt-2">
                         <div className="flex justify-between font-bold text-base lg:text-lg">
                           <span>Total</span>

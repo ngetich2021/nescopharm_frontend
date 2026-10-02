@@ -25,6 +25,7 @@ import { Loader2, Plus, Truck, User, Phone, MapPin, Package, Wallet } from "luci
 import { OrderDispatch } from "@/lib/order-dispatches";
 import { createLogistics, CreateLogisticsData } from "@/lib/logistics";
 import { getDeliveryPersons, createDeliveryPerson, DeliveryPerson } from "@/lib/delivery-persons";
+import { getDeliveryRates, DeliveryRate, DeliveryZone } from "@/lib/delivery-rates";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { KENYA_REGIONS, getCountiesForRegion } from "@/lib/kenya-locations";
@@ -60,14 +61,6 @@ const VEHICLE_TYPES = [
   { value: "car", label: "Car" },
 ];
 
-const PAYMENT_METHODS = [
-  { value: "cash", label: "Cash" },
-  { value: "mpesa", label: "M-Pesa" },
-  { value: "bank_transfer", label: "Bank Transfer" },
-  { value: "cheque", label: "Cheque" },
-  { value: "other", label: "Other" },
-];
-
 export function CreateLogisticsModal({
   open,
   onOpenChange,
@@ -79,6 +72,10 @@ export function CreateLogisticsModal({
   const [loading, setLoading] = useState(false);
   const [deliveryPersons, setDeliveryPersons] = useState<DeliveryPerson[]>([]);
   const [fetchingDeliveryPersons, setFetchingDeliveryPersons] = useState(false);
+  const [deliveryRates, setDeliveryRates] = useState<DeliveryRate[]>([]);
+  const [fetchingRates, setFetchingRates] = useState(false);
+  const [selectedZone, setSelectedZone] = useState<DeliveryZone | "">("");
+  const [selectedRateId, setSelectedRateId] = useState<string>("");
 
   // Form State - only order_dispatch_id and delivery_status are required
   const [formData, setFormData] = useState<CreateLogisticsData>({
@@ -99,17 +96,39 @@ export function CreateLogisticsModal({
   useEffect(() => {
     if (open) {
       loadDeliveryPersons();
-      
-      // Pre-fill with dispatch data (all optional)
+      loadDeliveryRates();
+      setSelectedZone("");
+      setSelectedRateId("");
+
+      // Pre-fill with dispatch data - all fields remain editable.
+      // delivery_locations has no single "address"/"name" column, so we
+      // assemble one from its parts; region/state/county only exist on the
+      // customer record, not on delivery_locations.
       const customer = dispatch.order?.customer;
+      const location = dispatch.delivery_location;
+
+      const addressParts = [
+        location?.house_number,
+        location?.street,
+        location?.estate,
+        location?.landmark,
+      ].filter(Boolean);
+      const assembledAddress = addressParts.length > 0 ? addressParts.join(", ") : (customer?.address || "");
+
       setFormData({
         order_dispatch_id: dispatch.id,
         delivery_status: "dispatched",
         tracking_number: `TRK-${Date.now()}`,
+        // Recipient info from customer
         recipient_name: customer?.name || "",
         recipient_phone: customer?.phone || "",
-        delivery_address: dispatch.delivery_location?.address || "",
-        country: "Kenya",
+        // Delivery address: prefer the dispatch's delivery_location, fall back to the customer's address
+        delivery_address: assembledAddress,
+        delivery_location: location?.estate || location?.landmark || "",
+        city: location?.city || customer?.city || "",
+        state: customer?.county || customer?.state || "",
+        region: customer?.region || "",
+        country: location?.country || customer?.country || "",
         notes: dispatch.special_instructions || "",
       });
     }
@@ -117,7 +136,7 @@ export function CreateLogisticsModal({
 
   const loadDeliveryPersons = async () => {
     if (!companyId) return;
-    
+
     setFetchingDeliveryPersons(true);
     try {
       const data = await getDeliveryPersons(companyId);
@@ -128,6 +147,23 @@ export function CreateLogisticsModal({
       setFetchingDeliveryPersons(false);
     }
   };
+
+  const loadDeliveryRates = async () => {
+    setFetchingRates(true);
+    try {
+      const data = await getDeliveryRates({ active_only: true });
+      setDeliveryRates(data);
+    } catch (error) {
+      console.error("Failed to load delivery rates", error);
+    } finally {
+      setFetchingRates(false);
+    }
+  };
+
+  const ratesForZone = deliveryRates.filter((r) => r.zone === selectedZone);
+  const selectedRate = deliveryRates.find((r) => r.id === selectedRateId);
+  const cartons = Number(formData.number_of_cartons) || 0;
+  const calculatedTotal = selectedRate ? Number(selectedRate.rate_per_carton) * cartons : 0;
 
   const handleAddDeliveryPerson = async () => {
     if (!companyId) return;
@@ -169,10 +205,22 @@ export function CreateLogisticsModal({
   };
 
   const handleCreate = async () => {
+    if (!selectedRateId) {
+      toast({ title: "Missing Information", description: "Please select a zone and transporter.", variant: "destructive" });
+      return;
+    }
+    if (!cartons || cartons < 1) {
+      toast({ title: "Missing Information", description: "Please enter the number of cartons.", variant: "destructive" });
+      return;
+    }
+
     setLoading(true);
     try {
-      await createLogistics(formData);
-      toast({ title: "Success", description: "Logistics created and dispatch updated." });
+      await createLogistics({ ...formData, delivery_rate_id: selectedRateId, number_of_cartons: cartons });
+      toast({
+        title: "Success",
+        description: `Logistics created. A delivery invoice of KES ${calculatedTotal.toLocaleString()} has been sent to accounting.`,
+      });
       onOpenChange(false);
       onSuccess?.();
     } catch (error: any) {
@@ -387,6 +435,16 @@ export function CreateLogisticsModal({
                   </div>
                 </div>
 
+                <div className="grid gap-2 mb-4">
+                  <Label htmlFor="transporter_invoice_number">Transporter Invoice <span className="text-xs text-gray-400">(optional)</span></Label>
+                  <Input
+                    id="transporter_invoice_number"
+                    placeholder="Invoice no. on the transporter's receipt"
+                    value={formData.transporter_invoice_number || ""}
+                    onChange={(e) => handleChange("transporter_invoice_number", e.target.value)}
+                  />
+                </div>
+
                 {/* Recipient Information - OPTIONAL */}
                 <div className="border-t border-gray-200 pt-4 mb-4">
                   <h5 className="text-sm font-medium text-gray-600 mb-3 flex items-center gap-1">
@@ -498,110 +556,93 @@ export function CreateLogisticsModal({
                   </div>
                 </div>
 
-                {/* Delivery Payment - OPTIONAL: what's paid to the delivery/
-                    logistics provider for this dispatch, not the customer's
-                    payment for the goods. */}
+                {/* Delivery Cost - transporter + zone rate, warehouse manager
+                    only enters carton count. The app calculates the total and
+                    raises a Delivery Invoice for accounting to pay before this
+                    dispatch can proceed. No manual money entry here. */}
                 <div className="border-t border-gray-200 pt-4 mb-4">
                   <h5 className="text-sm font-medium text-gray-600 mb-3 flex items-center gap-1">
                     <Wallet className="h-3.5 w-3.5" />
-                    Delivery Payment
-                    <span className="text-xs text-gray-400 font-normal">(all optional)</span>
+                    Delivery Cost
+                    <span className="text-xs text-gray-400 font-normal">(auto-calculated)</span>
                   </h5>
                   <div className="grid gap-4">
                     <div className="grid grid-cols-2 gap-4">
                       <div className="grid gap-2">
-                        <Label htmlFor="delivery_cost">Delivery Cost (KES)</Label>
-                        <Input
-                          id="delivery_cost"
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          placeholder="0.00"
-                          value={formData.delivery_cost ?? ""}
-                          onChange={(e) => handleChange("delivery_cost", e.target.value === "" ? "" : Number(e.target.value))}
-                        />
-                      </div>
-                      <div className="grid gap-2">
-                        <Label htmlFor="amount_paid">Amount Paid (KES)</Label>
-                        <Input
-                          id="amount_paid"
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          placeholder="0.00"
-                          value={formData.amount_paid ?? ""}
-                          onChange={(e) => handleChange("amount_paid", e.target.value === "" ? "" : Number(e.target.value))}
-                        />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="grid gap-2">
-                        <Label htmlFor="payment_method">Payment Method</Label>
-                        <Select value={formData.payment_method || ""} onValueChange={(value) => handleChange("payment_method", value)}>
-                          <SelectTrigger id="payment_method">
-                            <SelectValue placeholder="Select method" />
+                        <Label htmlFor="zone">Zone</Label>
+                        <Select
+                          value={selectedZone}
+                          onValueChange={(value) => {
+                            setSelectedZone(value as DeliveryZone);
+                            setSelectedRateId("");
+                          }}
+                        >
+                          <SelectTrigger id="zone">
+                            <SelectValue placeholder="Select zone" />
                           </SelectTrigger>
                           <SelectContent>
-                            {PAYMENT_METHODS.map((method) => (
-                              <SelectItem key={method.value} value={method.value}>{method.label}</SelectItem>
-                            ))}
+                            <SelectItem value="nairobi">Nairobi</SelectItem>
+                            <SelectItem value="upcountry">Upcountry</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="payment_reference">Payment Reference</Label>
+                        <Label htmlFor="transporter">Transporter</Label>
+                        <Select
+                          value={selectedRateId}
+                          onValueChange={(value) => {
+                            setSelectedRateId(value);
+                            handleChange("delivery_rate_id", value);
+                          }}
+                          disabled={!selectedZone}
+                        >
+                          <SelectTrigger id="transporter">
+                            <SelectValue placeholder={
+                              fetchingRates ? "Loading..." : selectedZone ? "Select transporter" : "Select a zone first"
+                            } />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ratesForZone.length === 0 && !fetchingRates ? (
+                              <div className="p-2 text-center text-sm text-muted-foreground">
+                                No approved rates for this zone yet.
+                              </div>
+                            ) : (
+                              ratesForZone.map((rate) => (
+                                <SelectItem key={rate.id} value={rate.id}>
+                                  {rate.transporter_name} — KES {Number(rate.rate_per_carton).toLocaleString()}/carton
+                                </SelectItem>
+                              ))
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor="number_of_cartons">Number of Cartons</Label>
                         <Input
-                          id="payment_reference"
-                          placeholder="e.g. M-Pesa code"
-                          value={formData.payment_reference || ""}
-                          onChange={(e) => handleChange("payment_reference", e.target.value)}
+                          id="number_of_cartons"
+                          type="number"
+                          min="1"
+                          step="1"
+                          placeholder="e.g. 10"
+                          value={formData.number_of_cartons ?? ""}
+                          onChange={(e) => handleChange("number_of_cartons", e.target.value === "" ? "" : Number(e.target.value))}
+                          disabled={!selectedRateId}
                         />
                       </div>
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="payment_date">Payment Date</Label>
-                      <Input
-                        id="payment_date"
-                        type="date"
-                        value={formData.payment_date || ""}
-                        onChange={(e) => handleChange("payment_date", e.target.value)}
-                      />
-                    </div>
-
-                    {/* Cheque details - only relevant when paying by cheque */}
-                    {formData.payment_method === "cheque" && (
-                      <div className="rounded-md border border-gray-200 bg-gray-50 p-3 grid gap-4">
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="grid gap-2">
-                            <Label htmlFor="cheque_number">Cheque Number</Label>
-                            <Input
-                              id="cheque_number"
-                              placeholder="e.g. 001234"
-                              value={formData.cheque_number || ""}
-                              onChange={(e) => handleChange("cheque_number", e.target.value)}
-                            />
-                          </div>
-                          <div className="grid gap-2">
-                            <Label htmlFor="bank_name">Bank Name</Label>
-                            <Input
-                              id="bank_name"
-                              placeholder="e.g. Equity Bank"
-                              value={formData.bank_name || ""}
-                              onChange={(e) => handleChange("bank_name", e.target.value)}
-                            />
-                          </div>
-                        </div>
-                        <div className="grid gap-2">
-                          <Label htmlFor="cheque_maturity_date">Maturity Date</Label>
-                          <Input
-                            id="cheque_maturity_date"
-                            type="date"
-                            value={formData.cheque_maturity_date || ""}
-                            onChange={(e) => handleChange("cheque_maturity_date", e.target.value)}
-                          />
-                          <p className="text-xs text-gray-400">When a post-dated cheque becomes bankable</p>
+                      <div className="grid gap-2">
+                        <Label>Total Delivery Cost</Label>
+                        <div className="h-10 flex items-center px-3 rounded-md border border-gray-200 bg-gray-50 font-semibold text-gray-800">
+                          KES {calculatedTotal.toLocaleString()}
                         </div>
                       </div>
+                    </div>
+                    {selectedRate && cartons > 0 && (
+                      <p className="text-xs text-gray-500">
+                        This will raise a Delivery Invoice of <strong>KES {calculatedTotal.toLocaleString()}</strong> for
+                        accounting to pay before the dispatch proceeds.
+                      </p>
                     )}
                   </div>
                 </div>

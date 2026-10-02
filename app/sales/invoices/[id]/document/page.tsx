@@ -8,11 +8,13 @@ import { fetchInvoiceById, Invoice } from "@/lib/invoices"
 import { getCompany, Company } from "@/lib/company"
 import { getCustomerProfile, CustomerProfileData } from "@/lib/customers"
 import { getCustomerAccount, type CustomerAccountWithDetails } from "@/lib/customer-accounts"
-import { INVOICE_PAYMENT_DETAILS } from "@/lib/invoice-payment-details"
+import { INVOICE_PAYMENT_DETAILS, COMPANY_KRA_PIN } from "@/lib/invoice-payment-details"
+import { getEtimsConfig } from "@/lib/etims"
 import { amountInWords } from "@/lib/number-to-words"
 import { ArrowLeft, Download, Mail, Printer } from "lucide-react"
 import { Loader2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { DocumentViewToggle, useDocumentView } from "@/components/document-view-toggle"
 
 export default function InvoiceDocumentPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
@@ -26,6 +28,13 @@ export default function InvoiceDocumentPage({ params }: { params: Promise<{ id: 
   const [isLoading, setIsLoading] = useState(true)
   const [isDownloading, setIsDownloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [companyPin, setCompanyPin] = useState<string | null>(null)
+  const [view, setView] = useDocumentView()
+  const isPricing = view === "pricing"
+
+  useEffect(() => {
+    getEtimsConfig().then((res) => setCompanyPin(res?.config?.kra_pin || null)).catch(() => setCompanyPin(null))
+  }, [])
 
   useEffect(() => {
     const getInvoice = async () => {
@@ -54,12 +63,10 @@ export default function InvoiceDocumentPage({ params }: { params: Promise<{ id: 
             if (fullCustomerData) {
               setCustomerDetails(fullCustomerData)
 
-              // Individual customers' KRA PIN is captured against the
-              // business owner/director on their credit account (see the
-              // credit-appraisal capture form), not on the Customer record
-              // itself - company customers use their own pin_number field
-              // directly, so only individuals need this extra lookup.
-              if (fullCustomerData.customer_type === "individual" && fullCustomerData.account_id) {
+              // Non-company customers without their own KRA PIN fall back to a
+              // director's PIN on their credit account. Companies must use their
+              // own pin_number (a director's PIN isn't the company's tax PIN).
+              if (fullCustomerData.customer_type !== "company" && !fullCustomerData.pin_number && fullCustomerData.account_id) {
                 try {
                   const account = await getCustomerAccount(fullCustomerData.account_id)
                   setCustomerAccount(account)
@@ -86,11 +93,16 @@ export default function InvoiceDocumentPage({ params }: { params: Promise<{ id: 
     window.print()
   }
 
-  // Allow linking straight to a print dialog, e.g. a "Print" button elsewhere in the app.
+  // Allow linking straight to a print or download dialog
   useEffect(() => {
-    if (!isLoading && invoice && typeof window !== 'undefined' && window.location.search.includes('autoprint=1')) {
-      const timer = setTimeout(() => window.print(), 300)
-      return () => clearTimeout(timer)
+    if (!isLoading && invoice && typeof window !== 'undefined') {
+      if (window.location.search.includes('autoprint=1')) {
+        const timer = setTimeout(() => window.print(), 300)
+        return () => clearTimeout(timer)
+      } else if (window.location.search.includes('download=1')) {
+        const timer = setTimeout(() => handleDownloadPDF(), 300)
+        return () => clearTimeout(timer)
+      }
     }
   }, [isLoading, invoice])
 
@@ -133,7 +145,7 @@ export default function InvoiceDocumentPage({ params }: { params: Promise<{ id: 
       const imgY = 10
       
       pdf.addImage(imgData, 'PNG', imgX, imgY, imgWidth * ratio, imgHeight * ratio)
-      pdf.save(`Invoice-${invoice.invoice_number}.pdf`)
+      pdf.save(`Invoice-${invoice.invoice_number}${isPricing ? "-Pricing" : ""}.pdf`)
       
       toast({
         title: "Success",
@@ -155,6 +167,9 @@ export default function InvoiceDocumentPage({ params }: { params: Promise<{ id: 
     const num = typeof amount === 'string' ? parseFloat(amount) : amount
     return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   }
+
+  const formatBatchDate = (date: string): string =>
+    new Date(date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" }).replace(/ /g, "-")
 
   if (isLoading) {
     return (
@@ -194,6 +209,7 @@ export default function InvoiceDocumentPage({ params }: { params: Promise<{ id: 
               Back
             </Button>
             <div className="flex gap-2">
+              <DocumentViewToggle value={view} onChange={setView} />
               <Button variant="outline" size="sm" onClick={handlePrint}>
                 <Printer className="h-4 w-4 mr-2" />
                 Print
@@ -240,7 +256,7 @@ export default function InvoiceDocumentPage({ params }: { params: Promise<{ id: 
 
           {/* Header */}
           <div className="flex justify-between items-end mb-3">
-            <h1 className="text-xl font-bold text-gray-900 tracking-wide">INVOICE</h1>
+            <h1 className="text-xl font-bold text-gray-900 tracking-wide">INVOICE{isPricing && " (PRICING)"}</h1>
             {invoice.due_date && invoice.due_date !== invoice.invoice_date && (
               <p className="text-xs text-gray-600">
                 Due Date: <span className="font-semibold text-gray-900">{new Date(invoice.due_date).toLocaleDateString()}</span>
@@ -275,14 +291,14 @@ export default function InvoiceDocumentPage({ params }: { params: Promise<{ id: 
                   <p>{customerDetails?.address || invoice.customer?.address}</p>
                 )}
                 {(() => {
-                  // Prefer the customer's own captured KRA PIN (now optional
-                  // for individuals too), falling back to the business owner/
-                  // director's PIN on their credit account when it's the only
-                  // one on record.
-                  const pin = customerDetails?.pin_number
-                    || invoice.customer?.pin_number
-                    || customerAccount?.directors?.[0]?.pin
-                  return pin ? <p>PIN: {pin}</p> : null
+                  const ownPin = customerDetails?.pin_number || invoice.customer?.pin_number
+                  const isCompany = (customerDetails?.customer_type || invoice.customer?.customer_type) === "company"
+                  // Companies always print a PIN line so a missing one is visible, never silently dropped.
+                  if (isCompany) {
+                    return <p className="font-semibold">KRA PIN: {ownPin || "Not provided"}</p>
+                  }
+                  const pin = ownPin || customerAccount?.directors?.find((d) => d.pin?.trim())?.pin
+                  return pin ? <p className="font-semibold">KRA PIN: {pin}</p> : null
                 })()}
               </div>
             </div>
@@ -354,6 +370,7 @@ export default function InvoiceDocumentPage({ params }: { params: Promise<{ id: 
               <thead>
                 <tr className="bg-gray-50">
                   <th className="border border-gray-300 text-left px-2 py-1.5 font-semibold text-gray-700 w-10">S.NO</th>
+                  <th className="border border-gray-300 text-left px-2 py-1.5 font-semibold text-gray-700 whitespace-nowrap">CODE</th>
                   <th className="border border-gray-300 text-left px-2 py-1.5 font-semibold text-gray-700">DESCRIPTION</th>
                   <th className="border border-gray-300 text-right px-2 py-1.5 font-semibold text-gray-700">QTY</th>
                   <th className="border border-gray-300 text-right px-2 py-1.5 font-semibold text-gray-700">UNIT PRICE</th>
@@ -362,27 +379,61 @@ export default function InvoiceDocumentPage({ params }: { params: Promise<{ id: 
                 </tr>
               </thead>
               <tbody>
-                {invoice.line_items && invoice.line_items.map((item, index) => (
-                  <tr key={item.id || index}>
-                    <td className="border border-gray-300 px-2 py-1.5 text-gray-900 align-top">{index + 1}</td>
-                    <td className="border border-gray-300 px-2 py-1.5 text-gray-900">
-                      {item.description}
-                      {(item.batch_number || item.expiry_date) && (
-                        <div className="text-xs text-gray-500 italic mt-0.5">
-                          {item.batch_number && <span>Batch: {item.batch_number}</span>}
-                          {item.batch_number && item.expiry_date && <span>&nbsp;&nbsp;</span>}
-                          {item.expiry_date && <span>Expiry: {new Date(item.expiry_date).toLocaleDateString()}</span>}
-                        </div>
-                      )}
-                    </td>
-                    <td className="border border-gray-300 text-right px-2 py-1.5 text-gray-900">{item.quantity}</td>
-                    <td className="border border-gray-300 text-right px-2 py-1.5 text-gray-900">KES {formatAmount(item.unit_price)}</td>
-                    <td className="border border-gray-300 text-right px-2 py-1.5 text-gray-900">{item.unit || "pcs"}</td>
-                    <td className="border border-gray-300 text-right px-2 py-1.5 text-gray-900">
-                      KES {formatAmount(parseFloat(item.quantity.toString()) * parseFloat(item.unit_price.toString()))}
-                    </td>
-                  </tr>
-                ))}
+                {invoice.line_items && invoice.line_items.map((item, index) => {
+                  // Invoices created from an order carry each FEFO batch with its own qty;
+                  // older/manual lines only have a single batch_number/expiry_date.
+                  const batches = item.metadata?.batches?.length
+                    ? item.metadata.batches
+                    : (item.batch_number || item.expiry_date)
+                      ? [{ batch_number: item.batch_number ?? null, expiry_date: item.expiry_date ?? null, quantity: null }]
+                      : []
+                  const unit = (item.unit || "pcs").toUpperCase()
+                  const qty = parseFloat(item.quantity.toString())
+                  const vatRate = parseFloat((item.tax_rate ?? 0).toString())
+                  const unitPriceInclVat = parseFloat(item.unit_price.toString()) * (1 + vatRate / 100)
+                  const itemCode = item.variant?.sku || item.product?.product_code || item.product?.sku || "—"
+                  return (
+                    <tr key={item.id || index} className="leading-5">
+                      <td className="border border-gray-300 px-2 py-1.5 text-gray-900 align-top">{index + 1}</td>
+                      <td className="border border-gray-300 px-2 py-1.5 text-gray-900 align-top whitespace-nowrap">{itemCode}</td>
+                      <td className="border border-gray-300 px-2 py-1.5 text-gray-900 align-top">
+                        <p className="font-semibold">{item.description}</p>
+                        {vatRate > 0 && (
+                          <span className="inline-block mt-0.5 border border-gray-500 px-1 text-[10px] font-semibold text-gray-700">
+                            VAT {vatRate}% inclusive
+                          </span>
+                        )}
+                        {batches.map((b, i) => (
+                          <div key={i} className="pl-6 text-xs italic text-gray-600">
+                            <p>Batch&nbsp;&nbsp;: {b.batch_number || "N/A"}</p>
+                            <p>Expiry : {b.expiry_date ? formatBatchDate(b.expiry_date) : "N/A"}</p>
+                          </div>
+                        ))}
+                      </td>
+                      {/* Each batch qty sits on its batch's line, mirroring the description cell's rows. */}
+                      <td className="border border-gray-300 text-right px-2 py-1.5 text-gray-900 align-top whitespace-nowrap">
+                        <p className="font-semibold">{qty.toLocaleString()} {unit}</p>
+                        {batches.map((b, i) => {
+                          const batchQty = b.quantity ?? (batches.length === 1 ? qty : null)
+                          return (
+                            <div key={i} className="text-xs">
+                              <p>{batchQty != null ? `${batchQty.toLocaleString()} ${unit}` : " "}</p>
+                              <p>&nbsp;</p>
+                            </div>
+                          )
+                        })}
+                      </td>
+                      <td className="border border-gray-300 text-right px-2 py-1.5 text-gray-900 align-top whitespace-nowrap">
+                        KES {formatAmount(unitPriceInclVat)}
+                        {isPricing && item.metadata?.price_label && <span className="font-semibold"> @ {item.metadata.price_label}</span>}
+                      </td>
+                      <td className="border border-gray-300 text-right px-2 py-1.5 text-gray-900 align-top">{unit}</td>
+                      <td className="border border-gray-300 text-right px-2 py-1.5 text-gray-900 align-top font-semibold">
+                        KES {formatAmount(qty * unitPriceInclVat)}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -394,18 +445,16 @@ export default function InvoiceDocumentPage({ params }: { params: Promise<{ id: 
                 <span className="text-gray-600">Subtotal:</span>
                 <span className="text-gray-900">KES {formatAmount(invoice.subtotal)}</span>
               </div>
-              {parseFloat(invoice.tax_amount.toString()) > 0 && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">Tax:</span>
-                  <span className="text-gray-900">KES {formatAmount(invoice.tax_amount)}</span>
-                </div>
-              )}
               {parseFloat(invoice.discount_amount.toString()) > 0 && (
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-600">Discount:</span>
                   <span className="text-green-600">-KES {formatAmount(invoice.discount_amount)}</span>
                 </div>
               )}
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-600">VAT:</span>
+                <span className="text-gray-900">KES {formatAmount(invoice.tax_amount)}</span>
+              </div>
               <div className="flex justify-between text-lg font-bold border-t-2 border-gray-300 pt-2">
                 <span>Total:</span>
                 <span>KES {formatAmount(invoice.total_amount)}</span>
@@ -450,28 +499,35 @@ export default function InvoiceDocumentPage({ params }: { params: Promise<{ id: 
             </div>
           )}
 
-          {/* Payment Details - only relevant while there's still a balance to collect */}
-          {invoice.status !== 'paid' && (
-            <div className="mt-8 pt-6 border-t border-gray-200">
-              <p className="text-sm font-bold text-gray-800 mb-3">
-                {(company?.name || 'COMPANY').toUpperCase()} PAYMENT DETAILS
-              </p>
-              <div className="grid grid-cols-2 gap-8 text-sm text-gray-600">
-                <div>
-                  <p className="font-semibold text-gray-800 mb-1">MPESA</p>
-                  <p>Paybill Number: {INVOICE_PAYMENT_DETAILS.mpesaPaybill}</p>
-                  <p>Account Number: {INVOICE_PAYMENT_DETAILS.mpesaAccount}</p>
-                </div>
-                <div>
-                  <p className="font-semibold text-gray-800 mb-1">BANK DETAILS</p>
-                  <p>Bank Name: {INVOICE_PAYMENT_DETAILS.bankName}</p>
-                  <p>Bank Account Name: {INVOICE_PAYMENT_DETAILS.bankAccountName}</p>
-                  <p>Account Number: {INVOICE_PAYMENT_DETAILS.bankAccountNumber}</p>
-                  <p>Bank Branch: {INVOICE_PAYMENT_DETAILS.bankBranch}</p>
+          {/* Company KRA PIN & Payment Details - always shown, side by side */}
+          {(() => {
+            const c = company || (invoice.company as Company | undefined)
+            return (
+              <div className="mt-6 border border-gray-300 text-xs leading-snug">
+                <p className="bg-gray-50 border-b border-gray-300 px-2 py-1 font-bold text-gray-800">
+                  {(c?.name || 'COMPANY').toUpperCase()} PAYMENT DETAILS
+                </p>
+                <div className="grid grid-cols-3 divide-x divide-gray-300">
+                  <div className="px-2 py-1.5">
+                    <p className="font-semibold text-gray-800 mb-0.5">COMPANY&apos;S KRA PIN</p>
+                    <p className="font-bold text-gray-900">{companyPin || COMPANY_KRA_PIN}</p>
+                  </div>
+                  <div className="px-2 py-1.5 text-gray-700">
+                    <p className="font-semibold text-gray-800 mb-0.5">M-PESA</p>
+                    <p>Paybill: <span className="font-semibold text-gray-900">{c?.mpesa_paybill || INVOICE_PAYMENT_DETAILS.mpesaPaybill}</span></p>
+                    <p>Account No: <span className="font-semibold text-gray-900">{c?.mpesa_account_number || INVOICE_PAYMENT_DETAILS.mpesaAccount}</span></p>
+                  </div>
+                  <div className="px-2 py-1.5 text-gray-700">
+                    <p className="font-semibold text-gray-800 mb-0.5">BANK DETAILS</p>
+                    <p>Bank: <span className="font-semibold text-gray-900">{c?.bank_name || INVOICE_PAYMENT_DETAILS.bankName}</span></p>
+                    <p>A/C Name: <span className="font-semibold text-gray-900">{c?.bank_account_name || INVOICE_PAYMENT_DETAILS.bankAccountName}</span></p>
+                    <p>A/C No: <span className="font-semibold text-gray-900">{c?.bank_account_number || INVOICE_PAYMENT_DETAILS.bankAccountNumber}</span></p>
+                    <p>Branch: <span className="font-semibold text-gray-900">{c?.bank_branch || INVOICE_PAYMENT_DETAILS.bankBranch}</span></p>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )
+          })()}
 
           {/* Declaration & Signature */}
           <div className="mt-8 pt-6 border-t border-gray-200 flex justify-between items-end gap-8">

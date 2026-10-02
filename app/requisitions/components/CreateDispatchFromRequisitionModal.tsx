@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { createDispatch } from "@/lib/dispatch";
-import { updateRequisitionStatus, type Requisition } from "@/lib/requisitions";
+import { createDispatch, getProductBatches, type InventoryBatch } from "@/lib/dispatch";
+import { type Requisition } from "@/lib/requisitions";
 import { getStores } from "@/lib/stores";
 import { fetchUsers, type UserData as UserType } from "@/lib/users";
 import { Button } from "@/components/ui/button";
@@ -46,6 +46,7 @@ interface Store {
 interface DispatchItem {
   product_id: string;
   variant_id?: string;
+  batch_id?: string;
   quantity: number;
   is_returnable: boolean;
   return_date?: string;
@@ -73,6 +74,11 @@ export function CreateDispatchFromRequisitionModal({
   const [stores, setStores] = useState<Store[]>([]);
   const [users, setUsers] = useState<UserType[]>([]);
   const [isVisible, setIsVisible] = useState(false);
+  const [batchesByIndex, setBatchesByIndex] = useState<Record<number, InventoryBatch[]>>({});
+  const [otherStoreBatches, setOtherStoreBatches] = useState<Record<number, InventoryBatch[]>>({});
+  const [batchesLoading, setBatchesLoading] = useState(false);
+  const [batchErrors, setBatchErrors] = useState<Record<number, string>>({});
+  const [batchReloadKey, setBatchReloadKey] = useState(0);
   const { toast } = useToast();
 
   const [formData, setFormData] = useState<FormData>({
@@ -133,7 +139,65 @@ export function CreateDispatchFromRequisitionModal({
       items: []
     });
     setErrors({});
+    setBatchesByIndex({});
+    setOtherStoreBatches({});
+    setBatchErrors({});
   };
+
+  // Re-fetch available batches (FEFO-sorted) for every line item whenever the
+  // source store changes - availability is store-scoped.
+  useEffect(() => {
+    if (!formData.from_store_id || formData.items.length === 0) {
+      setBatchesByIndex({});
+      setOtherStoreBatches({});
+      setBatchErrors({});
+      setBatchesLoading(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setBatchesLoading(true);
+      try {
+        // One request per item across all stores, split client-side by store.
+        const results = await Promise.allSettled(
+          formData.items.map((item) =>
+            getProductBatches(item.product_id, { variant_id: item.variant_id })
+          )
+        );
+        if (cancelled) return;
+        const map: Record<number, InventoryBatch[]> = {};
+        const otherMap: Record<number, InventoryBatch[]> = {};
+        const errorMap: Record<number, string> = {};
+        results.forEach((result, index) => {
+          if (result.status === "rejected") {
+            map[index] = [];
+            otherMap[index] = [];
+            errorMap[index] = result.reason?.message || "Failed to load batches";
+            return;
+          }
+          map[index] = result.value.filter((b) => b.store_id === formData.from_store_id);
+          otherMap[index] = result.value.filter((b) => b.store_id !== formData.from_store_id);
+        });
+
+        setBatchesByIndex(map);
+        setOtherStoreBatches(otherMap);
+        setBatchErrors(errorMap);
+        // Keep a selected batch only if it belongs to the new store; otherwise default to soonest expiry
+        setFormData((prev) => ({
+          ...prev,
+          items: prev.items.map((item, index) => {
+            const options = map[index] || [];
+            if (item.batch_id && options.some((b) => b.id === item.batch_id)) return item;
+            return { ...item, batch_id: options[0]?.id };
+          }),
+        }));
+      } finally {
+        if (!cancelled) setBatchesLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.from_store_id, formData.items.length, batchReloadKey]);
 
   const loadInitialData = async () => {
     try {
@@ -189,9 +253,11 @@ export function CreateDispatchFromRequisitionModal({
     try {
       const payload = {
         ...formData,
+        requisition_id: requisition.id,
         items: formData.items.map(item => ({
           product_id: item.product_id,
           variant_id: item.variant_id || undefined,
+          batch_id: item.batch_id || undefined,
           quantity: item.quantity,
           is_returnable: item.is_returnable,
           return_date: item.return_date || undefined,
@@ -199,16 +265,10 @@ export function CreateDispatchFromRequisitionModal({
         }))
       };
 
-      // Create the dispatch
+      // Creates the dispatch and marks the requisition dispatched in one backend transaction
       const dispatchResponse = await createDispatch(payload);
-      
-      if (dispatchResponse.status === 'success') {
-        // Update requisition status to "dispatched" with dispatch_id
-        await updateRequisitionStatus(requisition.id, {
-          status: "dispatched",
-          dispatch_id: dispatchResponse.dispatch.id
-        });
 
+      if (dispatchResponse.status === 'success') {
         toast({
           title: "Success",
           description: `Dispatch created successfully for requisition ${requisition.requisition_number}`,
@@ -221,7 +281,7 @@ export function CreateDispatchFromRequisitionModal({
       console.error("Error creating dispatch:", error);
       toast({
         title: "Error",
-        description: "Failed to create dispatch. Please try again.",
+        description: error instanceof Error ? error.message : "Failed to create dispatch. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -498,7 +558,7 @@ export function CreateDispatchFromRequisitionModal({
                               <p className="text-sm text-gray-600">Variant: {variant.name}</p>
                             )}
                             <p className="text-xs text-gray-500">
-                              SKU: {product?.sku || 'N/A'}
+                              SKU: {variant?.sku || product?.sku || 'N/A'}
                             </p>
                           </div>
                           <div className="text-right">
@@ -507,6 +567,88 @@ export function CreateDispatchFromRequisitionModal({
                               {product?.unit_of_measurement}
                             </div>
                           </div>
+                        </div>
+
+                        <div className="space-y-2 mb-4">
+                          <Label>Batch (FEFO - earliest expiry first)</Label>
+                          <Select
+                            value={item.batch_id || ""}
+                            onValueChange={(value) => updateItem(index, { batch_id: value })}
+                            disabled={!formData.from_store_id || batchesLoading}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder={
+                                !formData.from_store_id
+                                  ? "Select a from-store first"
+                                  : batchesLoading
+                                    ? "Loading batches..."
+                                    : batchErrors[index]
+                                      ? "Couldn't load batches"
+                                      : (batchesByIndex[index]?.length
+                                          ? "Select a batch"
+                                          : otherStoreBatches[index]?.length
+                                            ? "No batches in this store"
+                                            : "No batches - not batch-tracked")
+                              } />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {(batchesByIndex[index] || []).map((batch) => (
+                                <SelectItem key={batch.id} value={batch.id}>
+                                  {batch.batch_number} — exp {batch.expiry_date ? format(new Date(batch.expiry_date), "dd MMM yyyy") : "N/A"} — {batch.quantity_available} avail
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {(() => {
+                            const selected = batchesByIndex[index]?.find((b) => b.id === item.batch_id);
+                            if (!selected) return null;
+                            return (
+                              <p className="text-xs text-gray-600">
+                                Batch <span className="font-medium">{selected.batch_number}</span>
+                                {" · "}Expiry{" "}
+                                <span className="font-medium">
+                                  {selected.expiry_date ? format(new Date(selected.expiry_date), "dd MMM yyyy") : "N/A"}
+                                </span>
+                                {" · "}{selected.quantity_available} available
+                              </p>
+                            );
+                          })()}
+                          {!batchesLoading && batchErrors[index] && (
+                            <div className="flex items-center justify-between gap-2 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700">
+                              <span>Couldn't load batches: {batchErrors[index]}</span>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-6 px-2 text-xs"
+                                onClick={() => setBatchReloadKey((k) => k + 1)}
+                              >
+                                Retry
+                              </Button>
+                            </div>
+                          )}
+                          {!batchesLoading && !batchErrors[index] && !batchesByIndex[index]?.length && otherStoreBatches[index]?.length > 0 && (
+                            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 space-y-1">
+                              <p className="font-medium">Batches for this item are held in another store:</p>
+                              {otherStoreBatches[index].map((b) => (
+                                <div key={b.id} className="flex items-center justify-between gap-2">
+                                  <span>
+                                    {b.store?.name ?? "Unknown store"} — {b.batch_number}, exp{" "}
+                                    {b.expiry_date ? format(new Date(b.expiry_date), "dd MMM yyyy") : "N/A"}, {b.quantity_available} avail
+                                  </span>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-6 px-2 text-xs"
+                                    onClick={() => setFormData((prev) => ({ ...prev, from_store_id: b.store_id }))}
+                                  >
+                                    Use this store
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

@@ -101,6 +101,7 @@ export interface ProductVariant {
   primary_image_url?: string // Full URL for primary variant image
   attributes: Record<string, string | string[]>
   store_id?: string
+  price_tiers?: PriceTierInput[]
 }
 
 export interface Dimensions {
@@ -620,7 +621,8 @@ export async function createProduct(productData: ProductData) {
         store_id: variant.store_id,
         allocated: variant.allocated,
         on_hand: variant.on_hand,
-        attributes: variant.attributes
+        attributes: variant.attributes,
+        price_tiers: (variant.price_tiers ?? []).filter(t => t.tier_name?.trim() && t.price > 0).map(t => ({ tier_name: t.tier_name.trim(), price: t.price })),
       })) : [],
     }
 

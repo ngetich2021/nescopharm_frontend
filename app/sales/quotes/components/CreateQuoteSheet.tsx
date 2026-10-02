@@ -14,7 +14,7 @@ import { Trash2, Plus, Search, Package, ArrowLeft, Save } from "lucide-react"
 import { useForm, useFieldArray, type SubmitHandler } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import { createQuote } from "@/lib/quotes"
+import { createQuote, fetchQuoteSalesReps, type SalesRep } from "@/lib/quotes"
 import { getCustomers, createCustomer, getCustomerDisplayName } from "@/lib/customers"
 import { getProducts } from "@/lib/products"
 import { useToast } from "@/hooks/use-toast"
@@ -22,6 +22,7 @@ import { formatCurrency } from "@/lib/utils"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
 import { formatPackagingForDisplay } from "@/lib/packaging-utils"
+import { DEFAULT_PRICE_CODE, priceOptionsFor } from "@/lib/price-codes"
 
 const lineItemSchema = z.object({
   product_id: z.string().min(1, "Please select a product"),
@@ -37,6 +38,7 @@ const lineItemSchema = z.object({
 
 const quoteSchema = z.object({
   customer_id: z.string().min(1, "Customer is required"),
+  sales_rep_id: z.string().optional(),
   valid_until: z.string().min(1, "Valid until date is required"),
   currency: z.string().min(1, "Currency is required"),
   status: z.enum(["pending", "accepted", "rejected", "expired"]),
@@ -54,6 +56,7 @@ interface CreateQuoteSheetProps {
 
 export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetProps) {
   const [customers, setCustomers] = useState<any[]>([])
+  const [salesReps, setSalesReps] = useState<SalesRep[]>([])
   const [products, setProducts] = useState<any[]>([])
   const [productsError, setProductsError] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
@@ -75,6 +78,7 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
     mode: 'onChange',
     defaultValues: {
       customer_id: '',
+      sales_rep_id: '',
       valid_until: '',
       currency: 'KES',
       status: 'pending' as const,
@@ -92,6 +96,7 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
   useEffect(() => {
     if (open && user) {
       loadCustomers()
+      loadSalesReps()
       loadProducts()
       // Set default valid until date (30 days from now)
       const defaultDate = new Date()
@@ -106,6 +111,15 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
       setCustomers(customersData || [])
     } catch (error: any) {
       // Silently handle customer loading errors
+    }
+  }
+
+  const loadSalesReps = async () => {
+    try {
+      const reps = await fetchQuoteSalesReps()
+      setSalesReps(reps || [])
+    } catch (error: any) {
+      // Silently handle sales rep loading errors - the field is optional
     }
   }
 
@@ -139,14 +153,19 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
   useEffect(() => {
     if (!open) return
     const term = productSearchTerm.trim()
-    if (term.length < 2) {
+    if (term.length < 1) {
+      setProductSearchResults(null)
+      return
+    }
+    // For single-character searches, use client-side filter only
+    if (term.length === 1) {
       setProductSearchResults(null)
       return
     }
     setIsSearchingProducts(true)
     const timer = setTimeout(async () => {
       try {
-        const { data } = await getProducts(1, 50, { search: term })
+        const { data } = await getProducts(1, 100, { search: term })
         setProductSearchResults(data || [])
       } catch (error) {
         console.error('Product search failed:', error)
@@ -159,13 +178,31 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
   }, [productSearchTerm, open])
 
   // Below the search threshold, fall back to filtering the initially loaded page.
+  // Uses fuzzy matching: checks if search term characters appear in sequence (case-insensitive)
+  const fuzzyMatch = (text: string | null | undefined, query: string) => {
+    if (!text) return false
+    const t = text.toLowerCase()
+    const q = query.toLowerCase()
+    let tIndex = 0
+    for (let i = 0; i < q.length; i++) {
+      tIndex = t.indexOf(q[i], tIndex)
+      if (tIndex === -1) return false
+      tIndex++
+    }
+    return true
+  }
+
   const filteredProducts = productSearchResults !== null
     ? productSearchResults
-    : products.filter(product =>
-        product.name?.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
-        product.sku?.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
-        product.description?.toLowerCase().includes(productSearchTerm.toLowerCase())
-      )
+    : products.filter(product => {
+        const searchTerm = productSearchTerm.toLowerCase().trim()
+        if (!searchTerm) return true
+        return (
+          fuzzyMatch(product.name, searchTerm) ||
+          fuzzyMatch(product.sku, searchTerm) ||
+          fuzzyMatch(product.description, searchTerm)
+        )
+      })
 
   const addLineItem = () => {
     append({
@@ -207,7 +244,7 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
         form.setValue(`items.${index}.description`, product.name)
       }
       form.setValue(`items.${index}.unit_price`, parseFloat(item.price || "0"))
-      form.setValue(`items.${index}.price_label`, null)
+      form.setValue(`items.${index}.price_label`, DEFAULT_PRICE_CODE)
     }
 
     setShowProductSearch(null)
@@ -296,6 +333,7 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
       
       const createData = {
         customer_id: data.customer_id,
+        sales_rep_id: data.sales_rep_id || null,
         notes: data.notes || "",
         valid_until: data.valid_until,
         status: data.status,
@@ -322,6 +360,7 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
       // Reset form
       form.reset({
         customer_id: '',
+        sales_rep_id: '',
         valid_until: '',
         currency: 'KES',
         status: 'pending' as const,
@@ -576,6 +615,29 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
                     )}
                   </div>
                 </div>
+
+                {/* Sales Rep Row */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="sales_rep_id">Sales Rep</Label>
+                    <Select
+                      value={form.watch('sales_rep_id') || "__none__"}
+                      onValueChange={(value) => form.setValue('sales_rep_id', value === "__none__" ? "" : value)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select sales rep (optional)" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">No rep assigned</SelectItem>
+                        {salesReps.map((rep) => (
+                          <SelectItem key={rep.id} value={rep.id}>
+                            {rep.first_name} {rep.last_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
@@ -802,25 +864,27 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
                         {(() => {
                           const productId = form.watch(`items.${index}.product_id`)
                           const product = products.find(p => p.id === productId)
-                          const tiers = (product as any)?.price_tiers as { tier_name: string; price: number | string }[] | undefined
-                          if (!tiers || tiers.length === 0) return null
+                          const variantId = form.watch(`items.${index}.variant_id`)
+                          const variant = (product as any)?.variants?.find((v: any) => v.id === variantId)
+                          const options = priceOptionsFor(product, variant)
+                          if (options.length === 0) return null
                           return (
                             <Select
                               value={form.watch(`items.${index}.price_label`) || ""}
-                              onValueChange={(label) => {
-                                const tier = tiers.find(t => t.tier_name === label)
-                                if (!tier) return
-                                form.setValue(`items.${index}.unit_price`, Number(tier.price))
-                                form.setValue(`items.${index}.price_label`, label)
+                              onValueChange={(code) => {
+                                const option = options.find(o => o.code === code)
+                                if (!option) return
+                                form.setValue(`items.${index}.unit_price`, option.price)
+                                form.setValue(`items.${index}.price_label`, code)
                               }}
                             >
                               <SelectTrigger className="h-7 text-xs mb-1 px-2">
                                 <SelectValue placeholder="Select price..." />
                               </SelectTrigger>
                               <SelectContent>
-                                {tiers.map((t) => (
-                                  <SelectItem key={t.tier_name} value={t.tier_name} className="text-xs">
-                                    {t.tier_name} — {Number(t.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                {options.map((o) => (
+                                  <SelectItem key={o.code} value={o.code} className="text-xs">
+                                    {o.code} — {o.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                   </SelectItem>
                                 ))}
                               </SelectContent>
@@ -837,11 +901,12 @@ export function CreateQuoteSheet({ open, onClose, onSuccess }: CreateQuoteSheetP
                             onChange: (e) => {
                               const productId = form.getValues(`items.${index}.product_id`)
                               const product = products.find(p => p.id === productId)
-                              const tiers = (product as any)?.price_tiers as { tier_name: string; price: number | string }[] | undefined
+                              const variantId = form.getValues(`items.${index}.variant_id`)
+                              const variant = (product as any)?.variants?.find((v: any) => v.id === variantId)
                               const label = form.getValues(`items.${index}.price_label`)
-                              const tier = tiers?.find(t => t.tier_name === label)
+                              const option = priceOptionsFor(product, variant).find(o => o.code === label)
                               const typed = parseFloat(e.target.value)
-                              if (!tier || Number(tier.price) !== typed) {
+                              if (!option || option.price !== typed) {
                                 form.setValue(`items.${index}.price_label`, "Custom")
                               }
                             },

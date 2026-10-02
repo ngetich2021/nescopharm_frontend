@@ -1,7 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -12,10 +14,10 @@ import {
   DropdownMenuItem, 
   DropdownMenuTrigger 
 } from "@/components/ui/dropdown-menu"
-import { Edit, ShoppingCart, FileText, Calendar, User, MapPin, Phone, Mail, ArrowLeft, Send, ChevronDown, MessageCircle } from "lucide-react"
+import { Edit, ShoppingCart, FileText, Calendar, User, MapPin, Phone, Mail, ArrowLeft, Send, ChevronDown, MessageCircle, Eye } from "lucide-react"
 import { getCustomerDisplayName } from "@/lib/customers"
 import { formatCurrency } from "@/lib/utils"
-import { Quote } from "@/lib/quotes"
+import { Quote, SalesRep, fetchQuoteSalesReps, assignQuoteSalesRep } from "@/lib/quotes"
 import { PermissionGuard } from "@/components/PermissionGuard"
 import { SendQuoteModal } from "@/components/modals/send-quote-modal"
 import apiCall from "@/lib/api"
@@ -44,9 +46,46 @@ export function ViewQuoteSheet({
   isConverting
 }: ViewQuoteSheetProps) {
   const [isSendQuoteModalOpen, setIsSendQuoteModalOpen] = useState(false)
+  const [salesReps, setSalesReps] = useState<SalesRep[]>([])
+  const [salesRepId, setSalesRepId] = useState<string>("")
+  const [isSavingRep, setIsSavingRep] = useState(false)
   const { toast } = useToast()
+  const router = useRouter()
+
+  useEffect(() => {
+    if (!open) return
+    fetchQuoteSalesReps().then(setSalesReps).catch(() => setSalesReps([]))
+  }, [open])
+
+  useEffect(() => {
+    setSalesRepId(quote?.sales_rep_id || quote?.original_submitted_by_id || "")
+  }, [quote?.id, quote?.sales_rep_id, quote?.original_submitted_by_id])
 
   if (!quote) return null
+
+  const handleSalesRepChange = async (value: string) => {
+    const previous = salesRepId
+    const next = value === "none" ? "" : value
+    setSalesRepId(next)
+    setIsSavingRep(true)
+    try {
+      await assignQuoteSalesRep(quote.id, next || null)
+      toast({ title: "Saved", description: next ? "Sales rep assigned" : "Sales rep cleared" })
+      onRefresh()
+    } catch (error: any) {
+      setSalesRepId(previous)
+      toast({ title: "Error", description: error.message || "Failed to assign sales rep", variant: "destructive" })
+    } finally {
+      setIsSavingRep(false)
+    }
+  }
+
+  const repFullName = (rep?: { first_name: string; last_name: string } | null) =>
+    rep ? `${rep.first_name} ${rep.last_name}`.trim() : ""
+  const currentRepName =
+    repFullName(salesReps.find((r) => r.id === salesRepId)) ||
+    repFullName(quote.sales_rep) ||
+    repFullName(quote.original_submitted_by)
 
   const handleSendEmail = () => {
     setIsSendQuoteModalOpen(true)
@@ -110,8 +149,10 @@ export function ViewQuoteSheet({
     return sum + (item.quantity * Number(item.unit_price))
   }, 0) || 0
 
-  const discount = Number(quote.discount || 0)
-  const finalAmount = Number(quote.final_amount || quote.total_amount || 0)
+  const discount = Number(quote.totals?.discount ?? quote.discount ?? 0)
+  const finalAmount = Number(quote.totals?.total ?? quote.final_amount ?? 0)
+  const vatTotal = (quote.totals?.vat_lines ?? []).reduce((sum, line) => sum + Number(line.amount), 0)
+  const vatFactor = (item: { tax_rate?: number | string | null }) => 1 + Number(item.tax_rate || 0) / 100
 
   return (
     <Sheet open={open} onOpenChange={(open) => !open && onClose()}>
@@ -158,6 +199,29 @@ export function ViewQuoteSheet({
                 <div className="flex justify-between">
                   <span className="text-sm font-medium text-gray-600">Currency:</span>
                   <span className="text-sm">{quote.currency}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm font-medium text-gray-600">Payment Terms:</span>
+                  <span className="text-sm font-semibold">{quote.payment_terms || "-"}</span>
+                </div>
+                <div className="flex justify-between items-center gap-4">
+                  <span className="text-sm font-medium text-gray-600 whitespace-nowrap">Sales Rep:</span>
+                  <PermissionGuard
+                    permissions={["can_update_quotes", "can_manage_system", "can_manage_company"]}
+                    fallback={<span className="text-sm">{currentRepName || "-"}</span>}
+                  >
+                    <Select value={salesRepId || "none"} onValueChange={handleSalesRepChange} disabled={isSavingRep}>
+                      <SelectTrigger id="quote-sales-rep" className="h-8 w-56">
+                        <SelectValue placeholder="Select sales rep" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No rep</SelectItem>
+                        {salesReps.map((rep) => (
+                          <SelectItem key={rep.id} value={rep.id}>{repFullName(rep)}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </PermissionGuard>
                 </div>
                 {quote.below_minimum_price && (
                   <div className="flex justify-between">
@@ -252,11 +316,14 @@ export function ViewQuoteSheet({
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="min-w-[250px]">Product</TableHead>
-                      <TableHead className="text-center">Quantity</TableHead>
+                      <TableHead>Item Code</TableHead>
+                      <TableHead className="min-w-[250px]">Item Description</TableHead>
+                      <TableHead>Pack Size</TableHead>
+                      <TableHead className="text-center">Order Qty</TableHead>
                       <TableHead className="text-center">Packaging</TableHead>
                       <TableHead className="text-right">Unit Price</TableHead>
-                      <TableHead className="text-right">Total</TableHead>
+                      <TableHead className="text-center">VAT</TableHead>
+                      <TableHead className="text-right">Amount</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -278,6 +345,7 @@ export function ViewQuoteSheet({
 
                       return (
                         <TableRow key={item.id}>
+                          <TableCell className="font-mono text-sm whitespace-nowrap">{item.item_code || "-"}</TableCell>
                           <TableCell>
                             <div className="space-y-1">
                               <div className="font-medium text-base">{item.product?.name || "Unknown Product"}</div>
@@ -291,13 +359,9 @@ export function ViewQuoteSheet({
                               {item.product?.description && (
                                 <div className="text-sm text-gray-600">{item.product.description}</div>
                               )}
-                              {item.product?.sku && (
-                                <div className="text-xs text-gray-500 font-mono bg-gray-50 inline-block px-2 py-0.5 rounded">
-                                  SKU: {item.product.sku}
-                                </div>
-                              )}
                             </div>
                           </TableCell>
+                          <TableCell className="text-sm whitespace-nowrap">{item.pack_size || "-"}</TableCell>
                           <TableCell className="text-center">
                             <div className="space-y-1">
                               <div className="font-medium">{displayQty}</div>
@@ -320,7 +384,7 @@ export function ViewQuoteSheet({
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="space-y-1">
-                              <div>{formatCurrency(Number(item.unit_price))}</div>
+                              <div>{formatCurrency(Number(item.unit_price) * vatFactor(item))}</div>
                               {item.packagingUnit && (
                                 <div className="text-xs text-gray-500">per {item.packagingUnit.unit_abbreviation}</div>
                               )}
@@ -331,8 +395,17 @@ export function ViewQuoteSheet({
                               )}
                             </div>
                           </TableCell>
+                          <TableCell className="text-center">
+                            {Number(item.tax_rate || 0) > 0 ? (
+                              <span className="inline-block border border-gray-500 px-1.5 py-0.5 text-xs font-semibold text-gray-700 whitespace-nowrap">
+                                VAT {Number(item.tax_rate)}% inclusive
+                              </span>
+                            ) : (
+                              <span className="text-xs text-gray-500 whitespace-nowrap">{item.tax_label || "-"}</span>
+                            )}
+                          </TableCell>
                           <TableCell className="text-right font-semibold">
-                            {formatCurrency(item.quantity * Number(item.unit_price))}
+                            {formatCurrency(item.quantity * Number(item.unit_price) * vatFactor(item))}
                           </TableCell>
                         </TableRow>
                       );
@@ -360,10 +433,20 @@ export function ViewQuoteSheet({
                     <span className="font-medium">-{formatCurrency(discount)}</span>
                   </div>
                 )}
+                <div className="flex justify-between text-base">
+                  <span className="text-gray-600">VAT:</span>
+                  <span className="font-medium">{formatCurrency(vatTotal)}</span>
+                </div>
                 <div className="flex justify-between font-bold text-xl border-t pt-3">
-                  <span>Total Amount:</span>
+                  <span>Total:</span>
                   <span className="text-blue-600">{formatCurrency(finalAmount)}</span>
                 </div>
+                {quote.payment_terms && (
+                  <div className="flex justify-between text-sm text-gray-600">
+                    <span>Payment terms:</span>
+                    <span className="font-semibold text-gray-900">{quote.payment_terms}</span>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -387,7 +470,12 @@ export function ViewQuoteSheet({
             <Button variant="outline" onClick={onClose}>
               Close
             </Button>
-            
+
+            <Button variant="outline" onClick={() => router.push(`/sales/quotes/${quote.id}/document`)}>
+              <Eye className="h-4 w-4 mr-2" />
+              View Document
+            </Button>
+
             <PermissionGuard permissions={["can_view_quotes", "can_manage_system", "can_manage_company"]} hideOnDenied>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

@@ -1,5 +1,6 @@
 "use client"
 
+import { priceFloorErrors } from "../price-floor"
 import { useState, useEffect, useRef, useCallback } from "react"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
@@ -13,6 +14,8 @@ import { Separator } from "@/components/ui/separator"
 import { Loader2, Plus, Image as ImageIcon, Package, Trash2, X, Check, ChevronsUpDown } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { createProduct, fileToDataUrl, type PackagingUnit, type PriceTierInput } from "@/lib/products"
+import { tierRowsForForm } from "@/lib/price-codes"
+import { PriceCodeFields } from "./price-code-fields"
 import { getProductCategories } from "@/lib/product-categories"
 import { getSuppliers } from "@/lib/suppliers"
 import { getStores } from "@/lib/stores"
@@ -41,6 +44,7 @@ interface ProductVariant {
   options: string[]
   damaged: number
   on_hold: number
+  price_tiers: PriceTierInput[]
 }
 
 interface Dimensions {
@@ -169,26 +173,12 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
       on_hand: 0,
       options: [],
       damaged: 0,
-      on_hold: 0
+      on_hold: 0,
+      price_tiers: tierRowsForForm([])
     }
   ])
   
-  // Price tiers (e.g. "Hospital Price", "Wholesale Price") - dynamic, user-named
-  const [priceTiers, setPriceTiers] = useState<PriceTierInput[]>([])
-
-  const addPriceTier = () => {
-    setPriceTiers(prev => [...prev, { tier_name: "", price: 0 }])
-  }
-
-  const updatePriceTier = (index: number, field: "tier_name" | "price", value: string) => {
-    setPriceTiers(prev => prev.map((tier, i) =>
-      i === index ? { ...tier, [field]: field === "price" ? parseFloat(value) || 0 : value } : tier
-    ))
-  }
-
-  const removePriceTier = (index: number) => {
-    setPriceTiers(prev => prev.filter((_, i) => i !== index))
-  }
+  const [priceTiers, setPriceTiers] = useState<PriceTierInput[]>(() => tierRowsForForm([]))
 
   // Minimum valid price = unit cost + shipping cost + logistics cost + margin. No price
   // (selling price, last price, or any tier price) may be at or below this.
@@ -383,9 +373,14 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
         on_hand: 0,
         options: [],
         damaged: 0,
-        on_hold: 0
+        on_hold: 0,
+        price_tiers: tierRowsForForm([])
       }
     ])
+  }
+
+  const setVariantTiers = (id: string, tiers: PriceTierInput[]) => {
+    setVariants(prev => prev.map(variant => variant.id === id ? { ...variant, price_tiers: tiers } : variant))
   }
   
   const removeVariant = (id: string) => {
@@ -669,7 +664,7 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
         shipping_cost: parseFloat(formData.shipping_cost) || 0,
         logistics_cost: parseFloat(formData.logistics_cost) || 0,
         margin_amount: parseFloat(formData.margin_amount) || 0,
-        price_tiers: priceTiers.filter(t => t.tier_name.trim()),
+        price_tiers: priceTiers.filter(t => t.tier_name.trim() && t.price > 0),
         last_price: formData.last_price ? parseFloat(formData.last_price) : undefined,
         sku: formData.sku.trim() || undefined,
         barcode: formData.barcode.trim() || undefined,
@@ -718,6 +713,7 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
               }, {} as Record<string, string | string[]>),
               damaged: variant.damaged,
               on_hold: variant.on_hold,
+              price_tiers: variant.price_tiers,
               id: 0 // New variants don't have IDs yet
             }))
           : [],
@@ -785,14 +781,19 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
         }
       }
       
-      const pricesToCheck: { label: string; value: number }[] = [
-        { label: "Selling price", value: productData.price },
-        ...(productData.last_price !== undefined ? [{ label: "Last price", value: productData.last_price }] : []),
-        ...priceTiers.filter(t => t.tier_name.trim()).map(t => ({ label: t.tier_name, value: t.price })),
-      ]
-      const underMinimum = pricesToCheck.filter(p => p.value <= minimumValidPrice)
-      if (underMinimum.length > 0) {
-        throw new Error(`${underMinimum.map(p => p.label).join(", ")} must be greater than the minimum valid price of KES ${minimumValidPrice.toFixed(2)} (cost + shipping + logistics + margin).`)
+      const floorErrors = priceFloorErrors({
+        hasVariations: productData.hasVariations,
+        unitCost: parseFloat(formData.cost) || 0,
+        shippingCost: parseFloat(formData.shipping_cost) || 0,
+        logisticsCost: parseFloat(formData.logistics_cost) || 0,
+        marginAmount: parseFloat(formData.margin_amount) || 0,
+        price: productData.price,
+        lastPrice: productData.last_price,
+        tiers: priceTiers,
+        variants: productData.variants,
+      })
+      if (floorErrors.length > 0) {
+        throw new Error(`${floorErrors.join("; ")} (cost + shipping + logistics + margin).`)
       }
 
       const result = await createProduct(productData)
@@ -846,7 +847,7 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
           taxRate: "",
           hsCode: ""
         })
-        setPriceTiers([])
+        setPriceTiers(tierRowsForForm([]))
 
         setPackagingUnits([
           {
@@ -877,10 +878,11 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
             on_hand: 0,
             options: [],
             damaged: 0,
-            on_hold: 0
+            on_hold: 0,
+            price_tiers: tierRowsForForm([])
           }
         ])
-        
+
         onProductCreated()
         onOpenChange(false)
       } else {
@@ -1063,17 +1065,6 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="price">Selling Price</Label>
-                    <Input
-                      id="price"
-                      type="number"
-                      step="0.01"
-                      value={formData.price}
-                      onChange={(e) => handleInputChange("price", e.target.value)}
-                      placeholder="0.00"
-                    />
-                  </div>
-                  <div className="space-y-2">
                     <Label htmlFor="cost">Cost Price</Label>
                     <Input
                       id="cost"
@@ -1171,46 +1162,22 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
                     </div>
                   </div>
                   <p className="text-sm text-muted-foreground">
-                    Minimum valid price: <span className="font-medium text-foreground">KES {minimumValidPrice.toFixed(2)}</span> (cost + shipping + logistics + margin). Selling price, last price, and every price tier below must be greater than this.
+                    Minimum valid price: <span className="font-medium text-foreground">KES {minimumValidPrice.toFixed(2)}</span> (cost + shipping + logistics + margin). NSPV, last price, and every other price must be greater than this.
                   </p>
                 </div>
 
                 {/* Price tiers */}
                 <Separator />
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h4 className="font-medium text-sm">Client Price Tiers</h4>
-                    <Button type="button" variant="outline" size="sm" onClick={addPriceTier}>
-                      <Plus className="h-4 w-4 mr-1" />
-                      Add Price
-                    </Button>
-                  </div>
-                  {priceTiers.length > 0 && (
-                    <div className="space-y-2">
-                      {priceTiers.map((tier, index) => (
-                        <div key={index} className="flex gap-2 items-center">
-                          <Input
-                            value={tier.tier_name}
-                            onChange={(e) => updatePriceTier(index, "tier_name", e.target.value)}
-                            placeholder="e.g. Hospital Price"
-                            className="flex-1"
-                          />
-                          <Input
-                            type="number"
-                            step="0.01"
-                            value={tier.price || ""}
-                            onChange={(e) => updatePriceTier(index, "price", e.target.value)}
-                            placeholder="0.00"
-                            className="w-32"
-                          />
-                          <Button type="button" variant="outline" size="sm" onClick={() => removePriceTier(index)}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                {formData.hasVariations ? (
+                  <p className="text-sm text-muted-foreground">This product has variations - set NSPV, NSPH, NSPO, NSPD for each variation under Variations.</p>
+                ) : (
+                  <PriceCodeFields
+                    nspv={formData.price}
+                    onNspvChange={(value) => handleInputChange("price", value)}
+                    tiers={priceTiers}
+                    onTiersChange={setPriceTiers}
+                  />
+                )}
 
                 {/* Tax Settings */}
                 <Separator />
@@ -1239,7 +1206,6 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
                             <SelectItem value="0">0% - Zero Rated</SelectItem>
                             <SelectItem value="8">8% - Reduced Rate</SelectItem>
                             <SelectItem value="16">16% - Standard Rate</SelectItem>
-                            <SelectItem value="20">20% - Higher Rate</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -1898,15 +1864,14 @@ export function CreateProductSheet({ open, onOpenChange, onProductCreated }: Cre
                               placeholder="Enter SKU"
                             />
                           </div>
-                          <div className="space-y-2">
-                            <Label htmlFor={`variant-price-${variant.id}`}>Price</Label>
-                            <Input
-                              id={`variant-price-${variant.id}`}
-                              type="number"
-                              step="0.01"
-                              value={variant.price}
-                              onChange={(e) => handleVariantChange(variant.id, "price", e.target.value)}
-                              placeholder="0.00"
+                          <div className="col-span-2">
+                            <PriceCodeFields
+                              idPrefix={`variant-${variant.id}-`}
+                              title="Variation Prices"
+                              nspv={variant.price}
+                              onNspvChange={(value) => handleVariantChange(variant.id, "price", value)}
+                              tiers={variant.price_tiers}
+                              onTiersChange={(tiers) => setVariantTiers(variant.id, tiers)}
                             />
                           </div>
                           <div className="space-y-2">

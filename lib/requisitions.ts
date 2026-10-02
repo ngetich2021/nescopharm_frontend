@@ -1,4 +1,6 @@
 import apiCall from "./api";
+import { getApiUrl } from "./config";
+import { getToken } from "./token-manager";
 
 // Types for Requisition and RequisitionItem based on API documentation
 export interface Product {
@@ -117,7 +119,7 @@ export interface Requisition {
   company_id: string;
   requester_id: string;
   approval_status: "pending" | "approved" | "rejected";
-  status: "pending" | "approved" | "rejected" | "fulfilled" | "cancelled" | "dispatched";
+  status: "pending" | "approved" | "rejected" | "dispatched" | "acknowledged";
   approver_id?: string | null;
   dispatch_id?: string | null;
   notes?: string | null;
@@ -204,13 +206,20 @@ export async function approveRequisition(
 }
 
 // Reject Requisition
+// Backend has no standalone /reject route — rejection goes through the same
+// /approve endpoint used for approval, with approval_status set to "rejected".
 export async function rejectRequisition(
   requisitionId: string,
   payload: {
-    notes: string;
+    approver_id: string;
+    notes?: string;
   }
 ): Promise<{ status: string; message: string; requisition: Requisition }> {
-  const response = await apiCall<{ status: string; message: string; requisition: Requisition }>(`/whs/requisitions/${requisitionId}/reject`, "PATCH", payload, true);
+  const response = await apiCall<{ status: string; message: string; requisition: Requisition }>(`/whs/requisitions/${requisitionId}/approve`, "PATCH", {
+    approver_id: payload.approver_id,
+    approval_status: "rejected",
+    notes: payload.notes,
+  }, true);
   return response;
 }
 
@@ -248,12 +257,48 @@ export async function updateRequisition(
 export async function updateRequisitionStatus(
   requisitionId: string,
   payload: {
-    status?: "pending" | "approved" | "rejected" | "fulfilled" | "cancelled" | "dispatched";
+    status?: "pending" | "approved" | "rejected" | "dispatched" | "acknowledged";
     dispatch_id?: string;
   }
 ): Promise<{ status: string; message: string; requisition: Requisition }> {
   const response = await apiCall<{ status: string; message: string; requisition: Requisition }>(`/whs/requisitions/${requisitionId}`, "PATCH", payload, true);
   return response;
+}
+
+// Download Requisition Note PDF (keyed by the dispatch created from the requisition)
+export async function downloadRequisitionNote(dispatchId: string): Promise<Blob> {
+  const url = getApiUrl(`/whs/dispatches/${dispatchId}/requisition-note`);
+  const token = getToken();
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/pdf",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to download requisition note: ${response.statusText}`);
+  }
+
+  return response.blob();
+}
+
+export async function downloadOfficialPurpose(requisitionId: string, type: "stock" | "custom"): Promise<Blob> {
+  const response = await fetch(getApiUrl(`/whs/requisitions/${requisitionId}/official-purpose?type=${type}`), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${getToken()}`,
+      Accept: "application/pdf",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to download official purpose document: ${response.statusText}`);
+  }
+
+  return response.blob();
 }
 
 // Delete Requisition

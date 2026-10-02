@@ -76,12 +76,7 @@ export function OrdersTable({ initialOrders = [] }: OrdersTableProps) {
     }
   }, [])
 
-  useEffect(() => {
-    if (initialOrders.length === 0) {
-      refreshOrders()
-    }
-  }, [initialOrders, refreshOrders])
-
+  // The parent page owns the initial load; the table only re-fetches on explicit refresh.
   useEffect(() => {
     if (initialOrders.length > 0) {
       setOrders(initialOrders)

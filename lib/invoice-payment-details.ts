@@ -9,3 +9,6 @@ export const INVOICE_PAYMENT_DETAILS = {
   bankAccountNumber: "3000233027",
   bankBranch: "INDUSTRIAL AREA",
 }
+
+// Used on printed documents when the eTIMS config has no KRA PIN on record.
+export const COMPANY_KRA_PIN = "P052406784Q"

@@ -56,6 +56,7 @@ interface EmployeesTableProps {
   onRefresh: () => void;
   onCreateNew: () => void;
   onTerminateEmployee?: (employee: Employee) => void;
+  onExportExcel?: () => void;
 }
 
 export function EmployeesTable({
@@ -75,6 +76,7 @@ export function EmployeesTable({
   onRefresh,
   onCreateNew,
   onTerminateEmployee,
+  onExportExcel,
 }: EmployeesTableProps) {
   const getStatusBadge = (status: string | undefined) => {
     if (!status) {
@@ -135,7 +137,12 @@ export function EmployeesTable({
               <Plus className="mr-2 h-4 w-4" />
               Add Employee
             </Button>
-            <Button variant="outline" size="sm">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onExportExcel}
+              className="border-[#1E2764] text-[#1E2764] hover:bg-[#1E2764]/10"
+            >
               <Download className="mr-2 h-4 w-4" />
               Export
             </Button>

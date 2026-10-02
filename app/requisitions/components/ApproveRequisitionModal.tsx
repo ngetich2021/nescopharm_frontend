@@ -22,7 +22,7 @@ import {
   Loader2
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { approveRequisition, type Requisition } from "@/lib/requisitions";
+import { approveRequisition, rejectRequisition, type Requisition } from "@/lib/requisitions";
 import { format } from "date-fns";
 
 interface ApproveRequisitionModalProps {
@@ -31,49 +31,62 @@ interface ApproveRequisitionModalProps {
   onSuccess: () => void;
   requisition: Requisition | null;
   currentUserId?: string;
+  mode?: "approve" | "reject";
 }
 
-export function ApproveRequisitionModal({ 
-  open, 
-  onOpenChange, 
-  onSuccess, 
+export function ApproveRequisitionModal({
+  open,
+  onOpenChange,
+  onSuccess,
   requisition,
-  currentUserId 
+  currentUserId,
+  mode = "approve",
 }: ApproveRequisitionModalProps) {
   const [loading, setLoading] = useState(false);
-  const [notes, setNotes] = useState("Approved");
+  const isReject = mode === "reject";
+  const [notes, setNotes] = useState(isReject ? "" : "Approved");
   const { toast } = useToast();
 
   const handleApprove = async () => {
     if (!requisition) return;
 
-    setLoading(true);
-    
-    try {
-      const payload = {
-        approver_id: currentUserId || requisition.approver_id || "",
-        approval_status: "approved" as const,
-        notes: notes || "Approved",
-      };
+    if (isReject && !notes.trim()) {
+      toast({
+        title: "Reason required",
+        description: "Please provide a reason for rejecting this requisition.",
+        variant: "destructive",
+      });
+      return;
+    }
 
-      console.log('Approving requisition with payload:', payload);
-      
-      const response = await approveRequisition(requisition.id, payload);
-      
-      console.log('Approve response:', response);
+    setLoading(true);
+
+    try {
+      if (isReject) {
+        await rejectRequisition(requisition.id, {
+          approver_id: currentUserId || requisition.approver_id || "",
+          notes,
+        });
+      } else {
+        await approveRequisition(requisition.id, {
+          approver_id: currentUserId || requisition.approver_id || "",
+          approval_status: "approved" as const,
+          notes: notes || "Approved",
+        });
+      }
 
       toast({
         title: "Success",
-        description: `Requisition ${requisition.requisition_number} has been approved successfully.`,
+        description: `Requisition ${requisition.requisition_number} has been ${isReject ? "rejected" : "approved"} successfully.`,
       });
 
       onSuccess();
       onOpenChange(false);
     } catch (error: any) {
-      console.error('Approve error:', error);
+      console.error(`${isReject ? "Reject" : "Approve"} error:`, error);
       toast({
         title: "Error",
-        description: error.message || "Failed to approve requisition",
+        description: error.message || `Failed to ${isReject ? "reject" : "approve"} requisition`,
         variant: "destructive",
       });
     } finally {
@@ -81,7 +94,7 @@ export function ApproveRequisitionModal({
     }
   };
 
-  // Check if requisition can be approved (only pending approval status)
+  // Check if requisition can be approved/rejected (only pending approval status)
   const canApprove = requisition?.approval_status === "pending";
 
   if (!canApprove && requisition) {
@@ -89,9 +102,9 @@ export function ApproveRequisitionModal({
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent className="sm:max-w-lg md:max-w-xl lg:max-w-2xl flex flex-col h-full">
           <SheetHeader>
-            <SheetTitle>Cannot Approve Requisition</SheetTitle>
+            <SheetTitle>Cannot {isReject ? "Reject" : "Approve"} Requisition</SheetTitle>
             <SheetDescription>
-              Requisition {requisition.requisition_number} cannot be approved
+              Requisition {requisition.requisition_number} cannot be {isReject ? "rejected" : "approved"}
             </SheetDescription>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto py-4">
@@ -117,9 +130,9 @@ export function ApproveRequisitionModal({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="sm:max-w-lg md:max-w-xl lg:max-w-2xl flex flex-col h-full">
         <SheetHeader>
-          <SheetTitle>Approve Requisition</SheetTitle>
+          <SheetTitle>{isReject ? "Reject" : "Approve"} Requisition</SheetTitle>
           <SheetDescription>
-            {requisition ? `Approve requisition ${requisition.requisition_number}` : "Approve requisition"}
+            {requisition ? `${isReject ? "Reject" : "Approve"} requisition ${requisition.requisition_number}` : `${isReject ? "Reject" : "Approve"} requisition`}
           </SheetDescription>
         </SheetHeader>
 
@@ -196,23 +209,27 @@ export function ApproveRequisitionModal({
             {/* Approval Notes */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-lg">Approval Notes</CardTitle>
+                <CardTitle className="text-lg">{isReject ? "Rejection Reason" : "Approval Notes"}</CardTitle>
                 <CardDescription>
-                  Add any notes or comments regarding this approval
+                  {isReject
+                    ? "Explain why this requisition is being rejected"
+                    : "Add any notes or comments regarding this approval"}
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
-                  <Label htmlFor="notes">Notes</Label>
+                  <Label htmlFor="notes">Notes {isReject && <span className="text-red-600">*</span>}</Label>
                   <Textarea
                     id="notes"
-                    placeholder="Enter approval notes (optional)..."
+                    placeholder={isReject ? "Enter the reason for rejection..." : "Enter approval notes (optional)..."}
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                     rows={4}
                   />
                   <p className="text-xs text-gray-500">
-                    Default: "Approved" - You can add specific comments if needed
+                    {isReject
+                      ? "Required - the requester will see this reason"
+                      : 'Default: "Approved" - You can add specific comments if needed'}
                   </p>
                 </div>
               </CardContent>
@@ -233,18 +250,18 @@ export function ApproveRequisitionModal({
           <Button
             type="button"
             disabled={loading}
-            className="bg-green-600 hover:bg-green-700"
+            className={isReject ? "bg-red-600 hover:bg-red-700" : "bg-green-600 hover:bg-green-700"}
             onClick={handleApprove}
           >
             {loading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Approving...
+                {isReject ? "Rejecting..." : "Approving..."}
               </>
             ) : (
               <>
                 <CheckCircle className="mr-2 h-4 w-4" />
-                Approve Requisition
+                {isReject ? "Reject Requisition" : "Approve Requisition"}
               </>
             )}
           </Button>

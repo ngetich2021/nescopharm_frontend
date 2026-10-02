@@ -193,6 +193,23 @@
     display: none !important;
   }
 
+  /* Print only the delivery note (or other #printable-document target)
+     when it's present on the page - hide everything else, including the
+     sheet/dialog chrome around it. */
+  body:has(#printable-document) * {
+    visibility: hidden;
+  }
+  body:has(#printable-document) #printable-document,
+  body:has(#printable-document) #printable-document * {
+    visibility: visible;
+  }
+  body:has(#printable-document) #printable-document {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+  }
+
   /* Remove shadows for print */
   .print\:shadow-none {
     box-shadow: none !important;

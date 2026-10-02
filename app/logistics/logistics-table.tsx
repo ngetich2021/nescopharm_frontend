@@ -25,10 +25,50 @@ import {
   ChevronRight,
   RefreshCw,
   Loader2,
+  Eye,
+  Upload,
+  File,
+  Download,
+  CheckCircle2,
+  RotateCcw,
 } from "lucide-react"
-import { getLogisticsPaginated, updateLogistics, type Logistics } from "@/lib/logistics"
+import { getLogisticsPaginated, updateLogistics, uploadDeliveryNote, reviewDeliveryNote, type Logistics } from "@/lib/logistics"
 import { format } from "date-fns"
 import { useToast } from "@/hooks/use-toast"
+import { usePermissions } from "@/hooks/use-permissions"
+
+function reviewerName(entry: Logistics) {
+  const r = entry.delivery_note_reviewed_by
+  if (!r || typeof r === "string") return null
+  return [r.first_name, r.last_name].filter(Boolean).join(" ") || null
+}
+
+function DeliveryNoteCell({ entry }: { entry: Logistics }) {
+  if (!entry.delivery_note_file) {
+    return <Badge className="bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-100">No</Badge>
+  }
+  const status = entry.delivery_note_status
+  return (
+    <div className="flex items-center gap-2">
+      <Badge className="bg-green-100 text-green-800 border-green-500 hover:bg-green-100">Yes</Badge>
+      {entry.delivery_note_url && (
+        <a
+          href={entry.delivery_note_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="text-muted-foreground hover:text-primary"
+          title="Download delivery note"
+        >
+          <Download className="h-4 w-4" />
+        </a>
+      )}
+      {status === "approved" && <span className="text-xs font-medium text-green-700">Approved</span>}
+      {status === "pending_review" && <span className="text-xs font-medium text-amber-700">Awaiting review</span>}
+      {status === "resubmit_requested" && <span className="text-xs font-medium text-red-700">Resubmit</span>}
+    </div>
+  )
+}
 
 function getStatusBadge(status: string) {
   const s = (status || "").toLowerCase()
@@ -78,6 +118,18 @@ export function LogisticsTable() {
   const [updateNotes, setUpdateNotes] = useState("")
   const [updating, setUpdating] = useState(false)
 
+  // View details dialog
+  const [viewDetailsOpen, setViewDetailsOpen] = useState(false)
+  const [viewingEntry, setViewingEntry] = useState<Logistics | null>(null)
+  const [uploadingFile, setUploadingFile] = useState(false)
+  const [reviewing, setReviewing] = useState(false)
+  const [resubmitComment, setResubmitComment] = useState("")
+  const [showResubmitForm, setShowResubmitForm] = useState(false)
+
+  const { userProfile, isCompanyAdmin, isSystemAdmin } = usePermissions()
+  const roleName = ((userProfile as any)?.role?.name || "").toLowerCase()
+  const canReviewDeliveryNote = roleName === "gm" || roleName === "director" || isCompanyAdmin() || isSystemAdmin()
+
   const fetchData = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true)
     else if (logistics.length === 0) setLoading(true)
@@ -126,6 +178,53 @@ export function LogisticsTable() {
     setUpdateDialogOpen(true)
   }
 
+  const openViewDetails = (entry: Logistics) => {
+    setViewingEntry(entry)
+    setShowResubmitForm(false)
+    setResubmitComment("")
+    setViewDetailsOpen(true)
+  }
+
+  const handleReview = async (action: "approve" | "resubmit") => {
+    if (!viewingEntry) return
+    if (action === "resubmit" && !resubmitComment.trim()) {
+      toast({ title: "Reason required", description: "Say what is wrong with the uploaded note so the right one can be uploaded.", variant: "destructive" })
+      return
+    }
+    setReviewing(true)
+    try {
+      const updated = await reviewDeliveryNote(viewingEntry.id, action, action === "resubmit" ? resubmitComment.trim() : undefined)
+      toast({
+        title: "Success",
+        description: action === "approve" ? "Delivery note approved." : "Resubmission requested.",
+      })
+      setViewingEntry({ ...viewingEntry, ...updated })
+      setShowResubmitForm(false)
+      setResubmitComment("")
+      fetchData(true)
+    } catch (err: any) {
+      toast({ title: "Error", description: err?.message || "Failed to review delivery note.", variant: "destructive" })
+    } finally {
+      setReviewing(false)
+    }
+  }
+
+  const handleFileUpload = async (file: File) => {
+    if (!viewingEntry) return
+    setUploadingFile(true)
+    try {
+      await uploadDeliveryNote(viewingEntry.id, file)
+      toast({ title: "Success", description: "Delivery note uploaded successfully." })
+      // Refresh the data
+      fetchData(true)
+      setViewDetailsOpen(false)
+    } catch (err: any) {
+      toast({ title: "Error", description: err?.message || "Failed to upload file.", variant: "destructive" })
+    } finally {
+      setUploadingFile(false)
+    }
+  }
+
   const handleUpdateStatus = async () => {
     if (!updateEntry) return
     setUpdating(true)
@@ -157,7 +256,7 @@ export function LogisticsTable() {
           <div className="relative w-full sm:w-auto">
             <Input
               className="pl-8 w-full sm:max-w-sm"
-              placeholder="Search by name, tracking #, address..."
+              placeholder="Search by name, tracking #, destination..."
               value={search}
               onChange={(e) => handleSearchChange(e.target.value)}
             />
@@ -194,8 +293,9 @@ export function LogisticsTable() {
               <TableHead>Recipient</TableHead>
               <TableHead>Driver</TableHead>
               <TableHead>Tracking #</TableHead>
-              <TableHead>Delivery Address</TableHead>
+              <TableHead>Destination</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead>Delivery Note</TableHead>
               <TableHead>Dispatched</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -203,7 +303,7 @@ export function LogisticsTable() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={8} className="h-24 text-center">
+                <TableCell colSpan={9} className="h-24 text-center">
                   <div className="flex items-center justify-center gap-2 text-muted-foreground">
                     <Loader2 className="h-5 w-5 animate-spin" />
                     Loading logistics...
@@ -212,7 +312,7 @@ export function LogisticsTable() {
               </TableRow>
             ) : paginatedLogistics.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="h-24 text-center">
+                <TableCell colSpan={9} className="h-24 text-center">
                   <div className="text-muted-foreground">
                     <TruckIcon className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     <p className="font-medium">No logistics found</p>
@@ -225,8 +325,23 @@ export function LogisticsTable() {
                 </TableCell>
               </TableRow>
             ) : (
-              paginatedLogistics.map((entry) => (
-                <TableRow key={entry.id} className="hover:bg-gray-50 cursor-pointer">
+              paginatedLogistics.map((entry) => {
+                const isDelivered = (entry.delivery_status || "").toLowerCase().includes("deliver")
+                const needsResubmit = entry.delivery_note_status === "resubmit_requested"
+                const isUnconfirmed = isDelivered && (!entry.delivery_note_file || needsResubmit)
+                return (
+                <TableRow
+                  key={entry.id}
+                  onClick={() => openViewDetails(entry)}
+                  className={`cursor-pointer ${isUnconfirmed ? "bg-red-50 hover:bg-red-100" : "hover:bg-gray-50"}`}
+                  title={
+                    needsResubmit
+                      ? "The uploaded delivery note was rejected - upload the correct one"
+                      : isUnconfirmed
+                        ? "Delivered but no stamped delivery note has been uploaded yet"
+                        : undefined
+                  }
+                >
                   <TableCell className="font-semibold text-primary">
                     {entry.order?.order_number || entry.order_dispatch?.dispatch_number || "—"}
                   </TableCell>
@@ -238,15 +353,29 @@ export function LogisticsTable() {
                   </TableCell>
                   <TableCell>
                     <div>
-                      <div className="font-medium">{entry.driver_name || "—"}</div>
-                      <div className="text-sm text-muted-foreground">{entry.vehicle_registration || ""}</div>
+                      <div className="font-medium">
+                        {(entry.delivery_person as any)?.full_name || (entry.delivery_person as any)?.name || entry.driver_name || "—"}
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {(entry.delivery_person as any)?.phone_number || (entry.delivery_person as any)?.phone || entry.vehicle_registration || ""}
+                      </div>
                     </div>
                   </TableCell>
                   <TableCell>{entry.tracking_number || "—"}</TableCell>
-                  <TableCell className="max-w-[200px] truncate" title={entry.delivery_address || ""}>
-                    {entry.delivery_address || "—"}
+                  <TableCell className="max-w-[200px] truncate" title={entry.delivery_location || ""}>
+                    {entry.delivery_location || "—"}
                   </TableCell>
-                  <TableCell>{getStatusBadge(entry.delivery_status)}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      {getStatusBadge(entry.delivery_status)}
+                      {isUnconfirmed && (
+                        <span className="text-xs font-medium text-red-700">Unconfirmed</span>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <DeliveryNoteCell entry={entry} />
+                  </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {formatDate(entry.dispatch_time)}
                   </TableCell>
@@ -259,6 +388,17 @@ export function LogisticsTable() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                        <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openViewDetails(entry) }}>
+                          <Eye className="mr-2 h-4 w-4" />
+                          View Details
+                        </DropdownMenuItem>
+                        {canReviewDeliveryNote && entry.delivery_note_status === "pending_review" && (
+                          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openViewDetails(entry) }}>
+                            <CheckCircle2 className="mr-2 h-4 w-4" />
+                            Review Delivery Note
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuSeparator />
                         <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openUpdateDialog(entry) }}>
                           Update Status
                         </DropdownMenuItem>
@@ -266,7 +406,7 @@ export function LogisticsTable() {
                     </DropdownMenu>
                   </TableCell>
                 </TableRow>
-              ))
+              )})
             )}
           </TableBody>
         </Table>
@@ -319,6 +459,267 @@ export function LogisticsTable() {
           </Button>
         </div>
       </div>
+
+      {/* View Details Dialog */}
+      <Dialog open={viewDetailsOpen} onOpenChange={setViewDetailsOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Dispatch Details</DialogTitle>
+            <DialogDescription>
+              {viewingEntry && (
+                <span>
+                  {viewingEntry.order?.order_number || viewingEntry.order_dispatch?.dispatch_number || "Logistics Entry"}
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          {viewingEntry && (
+            <div className="space-y-6 py-4">
+              {/* Recipient Information */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Recipient Name</Label>
+                  <p className="font-medium">{viewingEntry.recipient_name || "—"}</p>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Recipient Phone</Label>
+                  <p className="font-medium">{viewingEntry.recipient_phone || "—"}</p>
+                </div>
+              </div>
+
+              {/* Delivery Address */}
+              <div className="space-y-2 border-t pt-4">
+                <Label className="text-sm font-semibold">Delivery Address</Label>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <p className="text-muted-foreground">Street Address</p>
+                    <p>{viewingEntry.delivery_address || "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Destination</p>
+                    <p>{viewingEntry.delivery_location || "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">City</p>
+                    <p>{viewingEntry.city || "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Region</p>
+                    <p>{viewingEntry.region || "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">State/County</p>
+                    <p>{viewingEntry.state || "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Country</p>
+                    <p>{viewingEntry.country || "—"}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Driver & Vehicle */}
+              <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Driver Name</Label>
+                  <p className="font-medium">
+                    {(viewingEntry.delivery_person as any)?.full_name || (viewingEntry.delivery_person as any)?.name || viewingEntry.driver_name || "—"}
+                  </p>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Driver Phone</Label>
+                  <p className="font-medium">
+                    {(viewingEntry.delivery_person as any)?.phone_number || (viewingEntry.delivery_person as any)?.phone || "—"}
+                  </p>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Vehicle Type</Label>
+                  <p className="font-medium">{viewingEntry.vehicle_type || "—"}</p>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Vehicle ID</Label>
+                  <p className="font-medium">{viewingEntry.vehicle_id || "—"}</p>
+                </div>
+              </div>
+
+              {/* Tracking & Status */}
+              <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Tracking Number</Label>
+                  <p className="font-medium">{viewingEntry.tracking_number || "—"}</p>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Status</Label>
+                  <div className="mt-1">{getStatusBadge(viewingEntry.delivery_status)}</div>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Dispatched</Label>
+                  <p className="font-medium">{formatDate(viewingEntry.dispatch_time)}</p>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Estimated Delivery</Label>
+                  <p className="font-medium">{formatDate(viewingEntry.estimated_delivery_time)}</p>
+                </div>
+              </div>
+
+              {/* Delivery Cost */}
+              <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Delivery Cost</Label>
+                  <p className="font-medium">{viewingEntry.delivery_cost ? `KES ${Number(viewingEntry.delivery_cost).toLocaleString()}` : "—"}</p>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Amount Paid</Label>
+                  <p className="font-medium">{viewingEntry.amount_paid ? `KES ${Number(viewingEntry.amount_paid).toLocaleString()}` : "—"}</p>
+                </div>
+              </div>
+
+              {/* Notes */}
+              {viewingEntry.notes && (
+                <div className="border-t pt-4">
+                  <Label className="text-sm font-semibold">Notes</Label>
+                  <p className="text-sm mt-2 p-3 bg-muted rounded">{viewingEntry.notes}</p>
+                </div>
+              )}
+
+              {/* Delivery Note Upload */}
+              <div className="border-t pt-4">
+                <Label className="text-sm font-semibold mb-3 block">Stamped Delivery Note (Proof of Receipt)</Label>
+                <div className="border-2 border-dashed rounded-lg p-6 text-center">
+                  {viewingEntry.delivery_note_file && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-center gap-2 text-green-600">
+                        <File className="h-5 w-5" />
+                        <span className="font-medium">Stamped Delivery Note Uploaded</span>
+                      </div>
+                      {viewingEntry.delivery_note_uploaded_at && (
+                        <p className="text-xs text-muted-foreground">Uploaded {formatDate(viewingEntry.delivery_note_uploaded_at)}</p>
+                      )}
+                      {viewingEntry.delivery_note_url && (
+                        <Button variant="outline" size="sm" asChild>
+                          <a href={viewingEntry.delivery_note_url} target="_blank" rel="noopener noreferrer" download>
+                            <Download className="mr-2 h-4 w-4" />
+                            Download Delivery Note
+                          </a>
+                        </Button>
+                      )}
+
+                      {viewingEntry.delivery_note_status === "approved" && (
+                        <div className="rounded-md bg-green-50 border border-green-200 p-3 text-sm text-green-800">
+                          <CheckCircle2 className="inline h-4 w-4 mr-1" />
+                          Approved{reviewerName(viewingEntry) ? ` by ${reviewerName(viewingEntry)}` : ""}
+                          {viewingEntry.delivery_note_reviewed_at ? ` on ${formatDate(viewingEntry.delivery_note_reviewed_at)}` : ""}
+                        </div>
+                      )}
+
+                      {viewingEntry.delivery_note_status === "resubmit_requested" && (
+                        <div className="rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-800 text-left">
+                          <p className="font-medium">
+                            Resubmission requested{reviewerName(viewingEntry) ? ` by ${reviewerName(viewingEntry)}` : ""}
+                          </p>
+                          {viewingEntry.delivery_note_review_comment && (
+                            <p className="mt-1">Reason: {viewingEntry.delivery_note_review_comment}</p>
+                          )}
+                        </div>
+                      )}
+
+                      {viewingEntry.delivery_note_status === "pending_review" && (
+                        canReviewDeliveryNote ? (
+                          <div className="space-y-3 pt-2 border-t text-left">
+                            <p className="text-sm font-medium text-center">Confirm this is the correct stamped delivery note</p>
+                            {showResubmitForm ? (
+                              <div className="space-y-2">
+                                <Label className="text-xs">What is wrong with it?</Label>
+                                <Textarea
+                                  value={resubmitComment}
+                                  onChange={(e) => setResubmitComment(e.target.value)}
+                                  placeholder="e.g. Not stamped, wrong dispatch, unreadable photo..."
+                                  rows={2}
+                                />
+                                <div className="flex justify-center gap-2">
+                                  <Button variant="outline" size="sm" onClick={() => setShowResubmitForm(false)} disabled={reviewing}>
+                                    Cancel
+                                  </Button>
+                                  <Button variant="destructive" size="sm" onClick={() => handleReview("resubmit")} disabled={reviewing}>
+                                    {reviewing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
+                                    Request Resubmit
+                                  </Button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex justify-center gap-2">
+                                <Button variant="outline" size="sm" onClick={() => setShowResubmitForm(true)} disabled={reviewing}>
+                                  <RotateCcw className="mr-2 h-4 w-4" />
+                                  Resubmit
+                                </Button>
+                                <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => handleReview("approve")} disabled={reviewing}>
+                                  {reviewing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+                                  Approve
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-amber-700">Awaiting confirmation by the GM or Director.</p>
+                        )
+                      )}
+                    </div>
+                  )}
+
+                  {(!viewingEntry.delivery_note_file || viewingEntry.delivery_note_status === "resubmit_requested") && (
+                    <div className={`space-y-3 ${viewingEntry.delivery_note_file ? "mt-4 pt-4 border-t" : ""}`}>
+                      {!viewingEntry.delivery_note_file && (
+                        <div className="flex items-center justify-center gap-2 text-amber-600">
+                          <File className="h-5 w-5" />
+                          <span>No stamped delivery note uploaded yet</span>
+                        </div>
+                      )}
+                      <p className="text-xs text-muted-foreground">
+                        {viewingEntry.delivery_note_file
+                          ? "Upload the correct stamped delivery note to replace the rejected one."
+                          : "Upload a photo of the delivery note once the client has stamped or signed it, to confirm the order was received."}
+                      </p>
+                      <input
+                        type="file"
+                        id="delivery-note-upload"
+                        accept=".pdf,.jpg,.jpeg,.png"
+                        onChange={(e) => {
+                          if (e.target.files?.[0]) {
+                            handleFileUpload(e.target.files[0])
+                          }
+                        }}
+                        disabled={uploadingFile}
+                        className="hidden"
+                      />
+                      <label htmlFor="delivery-note-upload">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={uploadingFile}
+                          asChild
+                          className="mt-2 cursor-pointer"
+                        >
+                          <span>
+                            <Upload className="mr-2 h-4 w-4" />
+                            {uploadingFile ? "Uploading..." : viewingEntry.delivery_note_file ? "Upload Correct Delivery Note" : "Upload Delivery Note"}
+                          </span>
+                        </Button>
+                      </label>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewDetailsOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Update Status Dialog */}
       <Dialog open={updateDialogOpen} onOpenChange={setUpdateDialogOpen}>

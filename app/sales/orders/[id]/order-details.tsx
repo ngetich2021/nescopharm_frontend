@@ -338,7 +338,7 @@ export function OrderDetails({ order, refreshOrder }: OrderDetailsProps) {
         due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
         payment_terms: 'Net 30',
         notes: order.notes || '',
-        payment_option: invoicePaymentOption,
+        payment_option: isOrderFullySettled ? 'instant' as const : invoicePaymentOption,
         payment_method: invoicePaymentOption === 'instant' ? invoicePaymentMethod : undefined,
         transaction_id: invoicePaymentOption === 'instant' ? (invoiceTransactionRef || undefined) : undefined,
         down_payment_amount: invoicePaymentOption === 'credit' && invoiceCreditOverage > 0 ? invoiceDownPaymentAmount : undefined,

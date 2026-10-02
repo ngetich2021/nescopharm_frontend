@@ -1,19 +1,23 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { 
-  type OrderDispatch, 
-  approveDispatch, 
-  rejectDispatch, 
+import {
+  type OrderDispatch,
+  approveDispatch,
+  rejectDispatch,
   canApproveDispatch,
   submitDispatchForApproval,
   canSubmitDispatch,
+  canMarkDelivered,
   type ApproveDispatchRequest,
   type RejectDispatchRequest
 } from "@/lib/order-dispatches";
 import { usePermissions } from "@/hooks/use-permissions";
 import { getCustomerDisplayName } from "@/lib/customers";
 import { CreateLogisticsModal } from "./CreateDispatchModal";
+import { MarkDeliveredModal } from "./MarkDeliveredModal";
+import { getDeliveryNotes, DeliveryNote } from "@/lib/delivery-notes";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -38,10 +42,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { 
-  X, 
-  Package, 
-  User, 
-  Calendar, 
+  X,
+  Package,
+  User,
+  Calendar,
   FileText,
   MapPin,
   Truck,
@@ -51,7 +55,9 @@ import {
   Ban,
   AlertTriangle,
   Loader2,
-  Send
+  Send,
+  Eye,
+  Download
 } from "lucide-react";
 import { format } from "date-fns";
 import { cn, toSentenceCase } from "@/lib/utils";
@@ -82,14 +88,26 @@ export function DispatchDetailsSheet({
   const [approveComments, setApproveComments] = useState("");
   const [submitDialogOpen, setSubmitDialogOpen] = useState(false);
   const [dispatchModalOpen, setDispatchModalOpen] = useState(false);
+  const [markDeliveredModalOpen, setMarkDeliveredModalOpen] = useState(false);
 
   const { isSystemAdmin, isCompanyAdmin, hasPermission } = usePermissions();
   
   const [localDispatch, setLocalDispatch] = useState<OrderDispatch | null>(dispatch);
+  const [deliveryNote, setDeliveryNote] = useState<DeliveryNote | null>(null);
 
   useEffect(() => {
     setLocalDispatch(dispatch);
   }, [dispatch]);
+
+  useEffect(() => {
+    if (!dispatch?.id) {
+      setDeliveryNote(null);
+      return;
+    }
+    getDeliveryNotes(dispatch.id)
+      .then((notes) => setDeliveryNote(notes[0] || null))
+      .catch(() => setDeliveryNote(null));
+  }, [dispatch?.id]);
 
   if (!localDispatch) return null;
 
@@ -242,8 +260,19 @@ export function DispatchDetailsSheet({
   // Can submit if draft and has items/approvers
   const canSubmit = canSubmitDispatch(localDispatch);
 
-  // Can dispatch if approved and not yet dispatched (no logistic assigned)
-  const canDispatch = localDispatch.approval_status === 'approved' && !localDispatch.logistic;
+  // Can dispatch if approved and not yet dispatched. Checking both the
+  // logistic relation AND the dispatch status guards against a dispatch
+  // that's already in_transit/delivered but whose logistic relation wasn't
+  // loaded on this response - showing "Dispatch Order" again would create
+  // a second logistics record for the same order.
+  const canDispatch = localDispatch.approval_status === 'approved'
+    && !localDispatch.logistic
+    && !['in_transit', 'delivered', 'cancelled'].includes(localDispatch.status);
+
+  // Can mark delivered once in transit with logistics assigned; the delivery
+  // note itself is enforced inside MarkDeliveredModal/the backend, not here.
+  const canDeliver = canMarkDelivered(localDispatch);
+  const hasDeliveryNote = !!localDispatch.logistic?.delivery_note_file;
   const customerDisplayName = localDispatch.order?.customer
     ? getCustomerDisplayName(localDispatch.order.customer)
     : "N/A";
@@ -361,12 +390,39 @@ export function DispatchDetailsSheet({
                      <p className="text-gray-500">Order has been approved. Assign driver to dispatch.</p>
                    </div>
                  </div>
-                 <Button 
+                 <Button
                    className="bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-200"
                    onClick={() => setDispatchModalOpen(true)}
                  >
                    <Truck className="h-4 w-4 mr-2" />
                    Dispatch Order
+                 </Button>
+               </div>
+            )}
+
+            {/* Action Bar for In Transit -> Delivered */}
+            {canDeliver && (
+               <div className="bg-white border border-green-200 shadow-sm rounded-xl p-6 flex flex-col sm:flex-row items-center justify-between gap-6 relative overflow-hidden">
+                 <div className="absolute top-0 left-0 w-1 h-full bg-green-500"></div>
+                 <div className="flex items-start gap-4">
+                   <div className="p-3 bg-green-100 text-green-700 rounded-full">
+                      <CheckCircle2 className="h-6 w-6" />
+                   </div>
+                   <div>
+                     <h3 className="text-lg font-semibold text-gray-900">In Transit</h3>
+                     <p className="text-gray-500">
+                       {hasDeliveryNote
+                         ? "Stamped delivery note on file. Confirm quantities to mark as delivered."
+                         : "Upload the customer-stamped delivery note to confirm receipt before marking as delivered."}
+                     </p>
+                   </div>
+                 </div>
+                 <Button
+                   className="bg-green-600 hover:bg-green-700 text-white shadow-md shadow-green-200"
+                   onClick={() => setMarkDeliveredModalOpen(true)}
+                 >
+                   <CheckCircle2 className="h-4 w-4 mr-2" />
+                   Mark as Delivered
                  </Button>
                </div>
             )}
@@ -418,15 +474,70 @@ export function DispatchDetailsSheet({
                        Delivery Information
                     </CardTitle>
                  </CardHeader>
-                 <CardContent className="pt-4 space-y-4">
-                    <div>
-                       <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Location</p>
-                       <p className="mt-1 font-semibold text-gray-900">{localDispatch.delivery_location?.name || 'N/A'}</p>
-                    </div>
-                    <div>
-                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Address</p>
-                        <p className="mt-1 text-sm text-gray-600 leading-relaxed">{localDispatch.delivery_location?.address || 'N/A'}</p>
-                    </div>
+                 <CardContent className="pt-4 space-y-3">
+                    {(() => {
+                      // The dispatch may have a structured delivery_location record,
+                      // or the destination may only have been captured as free-text
+                      // fields on the logistic record when it was dispatched. Prefer
+                      // the structured one, fall back to the logistic's.
+                      const loc = localDispatch.delivery_location;
+                      const log = localDispatch.logistic;
+                      const recipientName = log?.recipient_name;
+                      const recipientPhone = log?.recipient_phone;
+                      const destination = loc?.landmark || log?.delivery_location;
+                      const streetAddress = loc
+                        ? [loc.house_number, loc.street].filter(Boolean).join(' ')
+                        : log?.delivery_address;
+                      const city = loc?.city || log?.city;
+                      const region = log?.region || log?.state;
+                      const country = loc?.country || log?.country;
+
+                      if (!loc && !log) {
+                        return <p className="text-gray-500">No delivery location set</p>;
+                      }
+
+                      return (
+                        <>
+                          {(recipientName || recipientPhone) && (
+                            <div>
+                               <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Recipient</p>
+                               <p className="mt-1 font-semibold text-gray-900">{recipientName || 'N/A'}</p>
+                               {recipientPhone && <p className="text-sm text-gray-600">{recipientPhone}</p>}
+                            </div>
+                          )}
+                          <div>
+                             <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Destination</p>
+                             <p className="mt-1 font-semibold text-gray-900">{destination || 'N/A'}</p>
+                          </div>
+                          <div>
+                             <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Street Address</p>
+                             <p className="mt-1 text-sm text-gray-600">{streetAddress || 'N/A'}</p>
+                          </div>
+                          {loc?.estate && (
+                            <div>
+                               <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Estate/Area</p>
+                               <p className="mt-1 text-sm text-gray-600">{loc.estate}</p>
+                            </div>
+                          )}
+                          <div className="grid grid-cols-2 gap-3">
+                             <div>
+                                <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">City</p>
+                                <p className="mt-1 text-sm text-gray-600">{city || 'N/A'}</p>
+                             </div>
+                             <div>
+                                <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">{loc ? 'Country' : 'Region'}</p>
+                                <p className="mt-1 text-sm text-gray-600">{loc ? (country || 'N/A') : (region || country || 'N/A')}</p>
+                             </div>
+                          </div>
+                          {loc?.location_note && (
+                            <div>
+                               <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Notes</p>
+                               <p className="mt-1 text-sm text-gray-600">{loc.location_note}</p>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                  </CardContent>
               </Card>
 
@@ -439,18 +550,124 @@ export function DispatchDetailsSheet({
                        Logistics
                     </CardTitle>
                  </CardHeader>
-                 <CardContent className="pt-4 space-y-4">
-                    <div className="flex justify-between items-center bg-gray-50 p-3 rounded-lg">
-                       <div>
-                          <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Logistic ID</p>
-                          <p className="text-sm font-semibold mt-1">{localDispatch.logistic?.logistics_number || 'Not assigned'}</p>
-                       </div>
-                       <Badge variant={localDispatch.logistic ? "default" : "secondary"}>
-                          {localDispatch.logistic?.status ? toSentenceCase(localDispatch.logistic.status) : 'Pending'}
-                       </Badge>
-                    </div>
+                 <CardContent className="pt-4 space-y-3">
+                    {localDispatch.logistic ? (
+                      <>
+                        <div className="flex justify-between items-center bg-gray-50 p-3 rounded-lg">
+                           <div>
+                              <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Tracking Number</p>
+                              <p className="text-sm font-semibold mt-1">{localDispatch.logistic.tracking_number || 'N/A'}</p>
+                           </div>
+                           <Badge variant="default">
+                              {toSentenceCase(localDispatch.logistic.delivery_status || localDispatch.logistic.status || 'pending')}
+                           </Badge>
+                        </div>
+                        {localDispatch.logistic.delivery_status === 'pending_payment' && (
+                           <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+                              Awaiting payment of the delivery invoice from accounting. The dispatch will proceed automatically once paid.
+                           </div>
+                        )}
+                        <div className="grid grid-cols-2 gap-3">
+                           <div>
+                              <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Driver</p>
+                              <p className="mt-1 text-sm font-medium text-gray-900">
+                                {localDispatch.logistic.delivery_person?.full_name || localDispatch.logistic.driver_name || 'N/A'}
+                              </p>
+                              {(localDispatch.logistic.delivery_person?.phone_number || localDispatch.logistic.driver_contact) && (
+                                <p className="text-xs text-gray-500">
+                                  {localDispatch.logistic.delivery_person?.phone_number || localDispatch.logistic.driver_contact}
+                                </p>
+                              )}
+                           </div>
+                           <div>
+                              <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Vehicle</p>
+                              <p className="mt-1 text-sm font-medium text-gray-900">
+                                {localDispatch.logistic.vehicle_type || 'N/A'}
+                              </p>
+                              {(localDispatch.logistic.vehicle_id || localDispatch.logistic.vehicle_registration) && (
+                                <p className="text-xs text-gray-500">
+                                  {localDispatch.logistic.vehicle_id || localDispatch.logistic.vehicle_registration}
+                                </p>
+                              )}
+                           </div>
+                        </div>
+                        {localDispatch.logistic.logistics_provider && (
+                          <div>
+                             <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Provider</p>
+                             <p className="mt-1 text-sm text-gray-600">{localDispatch.logistic.logistics_provider}</p>
+                          </div>
+                        )}
+                        {localDispatch.logistic.estimated_delivery_time && (
+                          <div>
+                             <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Estimated Delivery</p>
+                             <p className="mt-1 text-sm text-gray-600">{formatDateTime(localDispatch.logistic.estimated_delivery_time)}</p>
+                          </div>
+                        )}
+                        {localDispatch.logistic.notes && (
+                          <div>
+                             <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Dispatch Notes</p>
+                             <p className="mt-1 text-sm text-gray-600">{localDispatch.logistic.notes}</p>
+                          </div>
+                        )}
+                        {hasDeliveryNote && (
+                          <div className="border-t border-gray-100 pt-3">
+                             <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">Stamped Delivery Note</p>
+                             <div className="flex items-center justify-between">
+                                <Badge className="bg-green-100 text-green-800 border-green-300">
+                                  {toSentenceCase(localDispatch.logistic.delivery_note_status || 'pending_review')}
+                                </Badge>
+                                {localDispatch.logistic.delivery_note_url && (
+                                  <div className="flex gap-2">
+                                     <a href={localDispatch.logistic.delivery_note_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center text-xs text-blue-600 hover:underline">
+                                        <Eye className="h-3.5 w-3.5 mr-1" /> View
+                                     </a>
+                                     <a href={localDispatch.logistic.delivery_note_url} download className="inline-flex items-center text-xs text-blue-600 hover:underline">
+                                        <Download className="h-3.5 w-3.5 mr-1" /> Download
+                                     </a>
+                                  </div>
+                                )}
+                             </div>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="text-center py-6 text-gray-500">
+                        <p className="font-medium mb-2">Not yet assigned</p>
+                        <p className="text-sm">Click "Dispatch Order" above to assign a driver and create the logistics record.</p>
+                      </div>
+                    )}
                  </CardContent>
               </Card>
+
+              {/* Delivery Note - auto-generated once the dispatch is delivered */}
+              {deliveryNote && (
+                <Card className="border-none shadow-md bg-white overflow-hidden">
+                   <div className="h-1 w-full bg-indigo-500"></div>
+                   <CardHeader className="pb-3 bg-slate-50/50 border-b border-slate-100">
+                      <CardTitle className="text-base font-semibold flex items-center gap-2 text-gray-800">
+                         <FileText className="h-4 w-4 text-indigo-500" />
+                         Delivery Note
+                      </CardTitle>
+                   </CardHeader>
+                   <CardContent className="pt-4 space-y-3">
+                      <div className="flex justify-between items-center bg-gray-50 p-3 rounded-lg">
+                         <div>
+                            <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Note Number</p>
+                            <p className="text-sm font-semibold mt-1">{deliveryNote.note_number}</p>
+                         </div>
+                         <Badge variant="default">{toSentenceCase(deliveryNote.status)}</Badge>
+                      </div>
+                      <div className="space-y-2">
+                         {deliveryNote.items.map((item, idx) => (
+                            <div key={idx} className="flex justify-between text-sm border-b border-gray-100 pb-2 last:border-0">
+                               <span className="text-gray-700">{item.product_name}</span>
+                               <span className="font-medium">{item.quantity_dispatched ?? item.delivered_quantity ?? 0} pcs</span>
+                            </div>
+                         ))}
+                      </div>
+                   </CardContent>
+                </Card>
+              )}
 
               {/* Timeline */}
               <Card className="border-none shadow-md bg-white overflow-hidden">
@@ -612,6 +829,31 @@ export function DispatchDetailsSheet({
                   )}
                 </div>
              </div>
+
+             {/* Delivery Note - kept as a compact reference here; the full printable document (matching the invoice's layout) lives at its own route */}
+             {localDispatch.logistic && !deliveryNote && (
+               <Card className="border-none shadow-md bg-white overflow-hidden border-l-4 border-l-amber-400">
+                 <CardContent className="py-4 px-5 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                       <div className="p-2 bg-amber-100 text-amber-700 rounded-lg">
+                          <FileText className="h-5 w-5" />
+                       </div>
+                       <div>
+                          <p className="font-semibold text-gray-900">Delivery Note</p>
+                          <p className="text-xs text-gray-500">Printable packing list for the warehouse and the client's signature/stamp</p>
+                       </div>
+                    </div>
+                    <div className="flex gap-2">
+                       <Link href={`/dispatch/${localDispatch.id}/delivery-note`}>
+                          <Button size="sm" variant="outline">View</Button>
+                       </Link>
+                       <Link href={`/dispatch/${localDispatch.id}/delivery-note?autoprint=1`}>
+                          <Button size="sm" variant="outline">Print</Button>
+                       </Link>
+                    </div>
+                 </CardContent>
+               </Card>
+             )}
           </div>
         </SheetContent>
       </Sheet>
@@ -699,15 +941,28 @@ export function DispatchDetailsSheet({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <CreateLogisticsModal 
+      <CreateLogisticsModal
         open={dispatchModalOpen}
         onOpenChange={setDispatchModalOpen}
         dispatch={localDispatch}
         onSuccess={() => {
+          // Reload delivery notes for this dispatch after payment
+          if (localDispatch?.id) {
+            getDeliveryNotes(localDispatch.id)
+              .then((notes) => setDeliveryNote(notes[0] || null))
+              .catch(() => setDeliveryNote(null));
+          }
           onRefresh?.();
-          // Optionally close sheet or keep open
         }}
       />
+      {localDispatch.logistic && (
+        <MarkDeliveredModal
+          open={markDeliveredModalOpen}
+          onOpenChange={setMarkDeliveredModalOpen}
+          dispatch={localDispatch}
+          onSuccess={() => onRefresh?.()}
+        />
+      )}
     </>
   );
 }

@@ -22,7 +22,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { createRequisition } from "@/lib/requisitions";
 import { getProducts, type Product as LibProduct } from "@/lib/products";
-import { fetchUsers, type UserData as User } from "@/lib/users";
+import { fetchUsers as fetchUsersFromApi, type UserData as User } from "@/lib/users";
 
 interface Product {
   id: string;
@@ -64,6 +64,7 @@ export function CreateRequisitionModal({ open, onOpenChange, onSuccess }: Create
   const [users, setUsers] = useState<User[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [customItemInput, setCustomItemInput] = useState("");
+  const [searchLoading, setSearchLoading] = useState(false);
   const { toast } = useToast();
 
   const [formData, setFormData] = useState<FormData>({
@@ -75,10 +76,10 @@ export function CreateRequisitionModal({ open, onOpenChange, onSuccess }: Create
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [apiResponse, setApiResponse] = useState<any>(null);
 
-  // Fetch products when sheet opens
+  // Fetch users and initial data when sheet opens
   useEffect(() => {
     if (open) {
-      fetchProducts();
+      fetchUsers();
     }
   }, [open]);
 
@@ -94,33 +95,62 @@ export function CreateRequisitionModal({ open, onOpenChange, onSuccess }: Create
       setApiResponse(null);
       setSearchQuery("");
       setCustomItemInput("");
+      setProducts([]);
     }
   }, [open]);
 
-  const fetchProducts = async () => {
+  // Search products as user types (server-side search)
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setProducts([]);
+      return;
+    }
+
+    const searchProducts = async () => {
+      setSearchLoading(true);
+      try {
+        const response = await getProducts(1, 50, { search: searchQuery });
+        setProducts(response.data || []);
+      } catch (error) {
+        console.error('Error searching products:', error);
+        setProducts([]);
+      } finally {
+        setSearchLoading(false);
+      }
+    };
+
+    // Debounce search to avoid too many requests
+    const timer = setTimeout(searchProducts, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  const fetchUsers = async () => {
     try {
-      const [productsResponse, usersData] = await Promise.all([
-        getProducts(1, 100),
-        // Only users who can actually approve a requisition (e.g. GM/Directors)
-        // should show up as approver options.
-        fetchUsers({ role_scope: "can_approve_requisitions" })
-      ]);
-      setProducts(productsResponse.data || []);
+      const usersData = await fetchUsersFromApi({ role_scope: "can_approve_requisitions" });
       setUsers(usersData);
     } catch (error) {
-      console.error('Error fetching data:', error);
+      console.error('Error fetching users:', error);
       toast({
         title: "Error",
-        description: "Failed to fetch data. Please try again.",
+        description: "Failed to fetch approvers. Please try again.",
         variant: "destructive",
       });
     }
   };
 
-  const filteredProducts = products.filter(product =>
-    product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (product.sku && product.sku.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
+  // Products are already filtered by server-side search, no client-side filtering needed
+  const filteredProducts = products;
+
+  // Mirrors the dispatch check: stock already reserved by open dispatches (on_hand) isn't available.
+  const availableOf = (product: any, variant?: any): number => {
+    if (variant) {
+      return Math.max(0, Number(variant.stock_quantity ?? 0) - Number(variant.on_hand ?? 0));
+    }
+    if (product?.has_variations && product.variants?.length) {
+      return product.variants.reduce((sum: number, v: any) => sum + availableOf(product, v), 0);
+    }
+    return Math.max(0, Number(product?.stock_quantity ?? 0) - Number(product?.on_hand ?? 0));
+  };
 
   const addProduct = (product: LibProduct, variant?: any) => {
     const existingItemIndex = formData.items.findIndex(
@@ -189,6 +219,13 @@ export function CreateRequisitionModal({ open, onOpenChange, onSuccess }: Create
     formData.items.forEach((item, index) => {
       if (item.quantity <= 0) {
         newErrors[`item_${index}_quantity`] = "Quantity must be greater than 0";
+      } else if (item.product) {
+        const available = availableOf(item.product, item.variant);
+        if (available <= 0) {
+          newErrors[`item_${index}_quantity`] = "Out of stock - remove this item";
+        } else if (item.quantity > available) {
+          newErrors[`item_${index}_quantity`] = `Only ${available} available`;
+        }
       }
     });
 
@@ -339,19 +376,32 @@ export function CreateRequisitionModal({ open, onOpenChange, onSuccess }: Create
                 {/* Product Search Results */}
                 {searchQuery && (
                   <div className="max-h-60 overflow-y-auto border rounded-md">
-                    {filteredProducts.length > 0 ? (
+                    {searchLoading ? (
+                      <div className="p-4 text-center text-gray-500 text-sm">
+                        <Loader2 className="h-4 w-4 inline animate-spin mr-2" />
+                        Searching products...
+                      </div>
+                    ) : filteredProducts.length > 0 ? (
                       <div className="divide-y">
-                        {filteredProducts.slice(0, 10).map((product) => (
+                        {filteredProducts.slice(0, 10).map((product) => {
+                          const hasVariants = !!(product.has_variations && product.variants?.length);
+                          const available = availableOf(product);
+                          const outOfStock = available <= 0;
+                          return (
                           <div key={product.id} className="p-4">
                             <div className="flex items-center justify-between">
                               <div className="flex-1">
                                 <h4 className="font-medium text-sm">{product.name}</h4>
                                 <div className="flex items-center space-x-4 mt-1">
-                                  <p className="text-xs text-gray-500">SKU: {product.sku}</p>
+                                  {product.sku && <p className="text-xs text-gray-500">SKU: {product.sku}</p>}
                                   <p className="text-xs text-gray-500">
-                                    Stock: {product.stock_quantity} {product.unit_of_measurement}
+                                    {hasVariants ? "Available (all variants)" : "Available"}: {available} {product.unit_of_measurement}
                                   </p>
-                                  {product.stock_quantity > 0 && product.stock_quantity <= 10 && (
+                                  {outOfStock ? (
+                                    <Badge variant="secondary" className="text-xs bg-red-100 text-red-700">
+                                      Out of Stock
+                                    </Badge>
+                                  ) : available <= 10 && (
                                     <Badge variant="secondary" className="text-xs bg-yellow-100 text-yellow-800">
                                       Low Stock
                                     </Badge>
@@ -359,57 +409,60 @@ export function CreateRequisitionModal({ open, onOpenChange, onSuccess }: Create
                                 </div>
                               </div>
                               <div className="flex items-center space-x-2">
-                                {product.has_variations && product.variants ? (
-                                  <>
-                                    <Select onValueChange={(variantId) => {
-                                      const variant = product.variants?.find(v => v.id === variantId);
+                                {hasVariants ? (
+                                  <Select
+                                    value=""
+                                    disabled={outOfStock}
+                                    onValueChange={(variantId) => {
+                                      const variant = product.variants?.find(v => String(v.id) === variantId);
                                       if (variant) addProduct(product, variant);
-                                    }}>
-                                      <SelectTrigger className="w-40">
-                                        <SelectValue placeholder="Select variant" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        {product.variants.map((variant) => (
-                                          <SelectItem 
-                                            key={variant.id} 
-                                            value={variant.id}
-                                            disabled={variant.stock_quantity <= 0}
+                                    }}
+                                  >
+                                    <SelectTrigger className="w-56">
+                                      <SelectValue placeholder={outOfStock ? "All variants out of stock" : "Select variant to add"} />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {product.variants!.map((variant) => {
+                                        const variantAvailable = availableOf(product, variant);
+                                        return (
+                                          <SelectItem
+                                            key={variant.id}
+                                            value={String(variant.id)}
+                                            disabled={variantAvailable <= 0}
                                           >
                                             <div className="flex items-center justify-between w-full">
                                               <span>{variant.name}</span>
-                                              <span className="text-xs text-gray-500 ml-2">
-                                                Stock: {variant.stock_quantity}
+                                              <span className={`text-xs ml-2 ${variantAvailable <= 0 ? "text-red-600 font-medium" : "text-gray-500"}`}>
+                                                {variantAvailable <= 0 ? "Out of stock" : `${variantAvailable} available`}
                                               </span>
                                             </div>
                                           </SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                    <Button
-                                      size="sm"
-                                      onClick={() => addProduct(product)}
-                                      disabled={product.stock_quantity <= 0}
-                                      className="bg-primary hover:bg-primary/90"
-                                    >
-                                      <Plus className="h-4 w-4 mr-1" />
-                                      Add
-                                    </Button>
-                                  </>
+                                        );
+                                      })}
+                                    </SelectContent>
+                                  </Select>
                                 ) : (
                                   <Button
                                     size="sm"
                                     onClick={() => addProduct(product)}
-                                    disabled={product.stock_quantity <= 0}
+                                    disabled={outOfStock}
                                     className="bg-[#E30040] hover:bg-[#E30040]/90"
                                   >
-                                    <Plus className="h-4 w-4 mr-1" />
-                                    Add
+                                    {outOfStock ? (
+                                      "Out of stock"
+                                    ) : (
+                                      <>
+                                        <Plus className="h-4 w-4 mr-1" />
+                                        Add
+                                      </>
+                                    )}
                                   </Button>
                                 )}
                               </div>
                             </div>
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     ) : (
                       <div className="p-4 text-center text-gray-500 text-sm">
@@ -452,7 +505,7 @@ export function CreateRequisitionModal({ open, onOpenChange, onSuccess }: Create
                       const product = item.product;
                       const variant = item.variant;
                       const isCustom = !product;
-                      const availableStock = variant ? variant.stock_quantity : product?.stock_quantity || 0;
+                      const availableStock = product ? availableOf(product, variant) : 0;
 
                       return (
                         <div key={`${item.product_id || item.custom_item_name}-${item.variant_id || 'no-variant'}-${index}`} className="border rounded-lg p-4">
@@ -470,8 +523,10 @@ export function CreateRequisitionModal({ open, onOpenChange, onSuccess }: Create
                               {isCustom ? (
                                 <p className="text-xs text-gray-500">Not in the product catalog - to be sourced manually</p>
                               ) : (
-                                <p className="text-xs text-gray-500">
-                                  Available: {availableStock} {product?.unit_of_measurement}
+                                <p className={`text-xs ${availableStock <= 0 || item.quantity > availableStock ? "text-red-600 font-medium" : "text-gray-500"}`}>
+                                  {availableStock <= 0
+                                    ? "Out of stock"
+                                    : `Available: ${availableStock} ${product?.unit_of_measurement ?? ""}`}
                                 </p>
                               )}
                             </div>

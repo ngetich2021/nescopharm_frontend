@@ -15,19 +15,20 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { 
-  ClipboardList, 
-  User, 
-  Calendar, 
-  Package, 
-  FileText, 
-  Building2, 
-  CheckCircle, 
+import {
+  ClipboardList,
+  User,
+  Calendar,
+  Package,
+  FileText,
+  Building2,
+  CheckCircle,
   XCircle,
   Edit,
-  Trash2
+  Trash2,
+  Loader2,
 } from "lucide-react";
-import { type Requisition } from "@/lib/requisitions";
+import { type Requisition, downloadOfficialPurpose } from "@/lib/requisitions";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
 import { EditRequisitionModal } from "./EditRequisitionModal";
@@ -58,6 +59,9 @@ export function RequisitionModal({
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [approveModalOpen, setApproveModalOpen] = useState(false);
+  const [rejectModalOpen, setRejectModalOpen] = useState(false);
+  const [downloadingSamples, setDownloadingSamples] = useState(false);
+  const [downloadingOffice, setDownloadingOffice] = useState(false);
   const { toast } = useToast();
   const { hasPermission } = useAuth();
 
@@ -88,10 +92,51 @@ export function RequisitionModal({
     // Keep the main modal open to show updated status
   };
 
+  const handleRejectSuccess = () => {
+    if (onRefresh) {
+      onRefresh();
+    }
+    setRejectModalOpen(false);
+    // Keep the main modal open to show updated status
+  };
+
+  const saveBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadOfficialPurpose = async (type: "stock" | "custom") => {
+    if (!currentRequisition) return;
+    const setDownloading = type === "stock" ? setDownloadingSamples : setDownloadingOffice;
+    const filePrefix = type === "stock" ? "samples-requisition" : "office-maintenance-requisition";
+    setDownloading(true);
+    try {
+      const blob = await downloadOfficialPurpose(currentRequisition.id, type);
+      saveBlob(blob, `${filePrefix}-${currentRequisition.requisition_number}.pdf`);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to download requisition document.",
+        variant: "destructive",
+      });
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const canEdit = currentRequisition?.status === "pending" && currentRequisition?.approval_status === "pending" && hasPermission("can_update_requisitions");
   const canDelete = currentRequisition?.status === "pending" && currentRequisition?.approval_status === "pending" && hasPermission("can_delete_requisitions");
   const canApprove = currentRequisition?.approval_status === "pending" && hasPermission("can_approve_requisitions");
   const canCreateDispatch = currentRequisition?.approval_status === "approved" && !currentRequisition?.dispatch_id;
+  const hasStockItems = !!currentRequisition?.items?.some((item) => !!item.product_id);
+  const hasCustomItems = !!currentRequisition?.items?.some((item) => !item.product_id);
+  const canDownloadOfficial = currentRequisition?.approval_status === "approved";
 
   const getStatusBadge = (status: string) => {
     switch (status.toLowerCase()) {
@@ -292,6 +337,34 @@ export function RequisitionModal({
               Close
             </Button>
             <div className="flex space-x-2">
+              {canDownloadOfficial && hasStockItems && (
+                <Button
+                  variant="outline"
+                  onClick={() => handleDownloadOfficialPurpose("stock")}
+                  disabled={downloadingSamples}
+                >
+                  {downloadingSamples ? (
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                  ) : (
+                    <FileText className="h-4 w-4 mr-1" />
+                  )}
+                  Samples Requisition
+                </Button>
+              )}
+              {canDownloadOfficial && hasCustomItems && (
+                <Button
+                  variant="outline"
+                  onClick={() => handleDownloadOfficialPurpose("custom")}
+                  disabled={downloadingOffice}
+                >
+                  {downloadingOffice ? (
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                  ) : (
+                    <FileText className="h-4 w-4 mr-1" />
+                  )}
+                  Office Maintenance Requisition
+                </Button>
+              )}
               {canCreateDispatch && (
                 <Button
                   onClick={() => {
@@ -303,6 +376,16 @@ export function RequisitionModal({
                 >
                   <Package className="h-4 w-4 mr-1" />
                   Create Dispatch
+                </Button>
+              )}
+              {canApprove && (
+                <Button
+                  variant="outline"
+                  onClick={() => setRejectModalOpen(true)}
+                  className="border-red-500 text-red-600 hover:bg-red-50"
+                >
+                  <XCircle className="h-4 w-4 mr-1" />
+                  Reject
                 </Button>
               )}
               {canApprove && (
@@ -358,6 +441,16 @@ export function RequisitionModal({
           onOpenChange={setApproveModalOpen}
           onSuccess={handleApproveSuccess}
           requisition={currentRequisition}
+          mode="approve"
+        />
+
+        {/* Reject Modal */}
+        <ApproveRequisitionModal
+          open={rejectModalOpen}
+          onOpenChange={setRejectModalOpen}
+          onSuccess={handleRejectSuccess}
+          requisition={currentRequisition}
+          mode="reject"
         />
       </SheetContent>
     </Sheet>

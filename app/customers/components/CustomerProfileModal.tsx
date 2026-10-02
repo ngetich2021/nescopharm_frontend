@@ -511,7 +511,7 @@ export function CustomerProfileModal({
             <Button variant="outline" onClick={onClose}>
               Close
             </Button>
-            <PermissionGuard permissions={["can_update_customers", "can_manage_system", "can_manage_company"]}>
+            <PermissionGuard permissions={["can_update_customers", "can_manage_system", "can_manage_company"]} hideOnDenied>
               <Button onClick={() => onEdit?.(customerProfile as Customer || customer)} className="bg-[primary] hover:bg-[primary]/90">
                 <Edit className="mr-2 h-4 w-4" />
                 Edit Customer

@@ -20,6 +20,7 @@ import { useToast } from "@/hooks/use-toast"
 import { formatCurrency, cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
 import { formatPackagingForDisplay } from "@/lib/packaging-utils"
+import { DEFAULT_PRICE_CODE, priceOptionsFor } from "@/lib/price-codes"
 
 const lineItemSchema = z.object({
   product_id: z.string().min(1, "Please select a product"),
@@ -152,19 +153,24 @@ export function EditQuoteSheet({ open, onClose, quote, onSuccess }: EditQuoteShe
     customer.phone?.toLowerCase().includes(customerSearchTerm.toLowerCase())
   )
 
-  // Search products server-side once the query is long enough, so results aren't
-  // limited to whatever happened to load in the initial page of products.
+  // Search products server-side for 2+ chars; single char uses client-side filter.
+  // Increase limit from 50 to 100 for better search coverage.
   useEffect(() => {
     if (!open) return
     const term = productSearchTerm.trim()
-    if (term.length < 2) {
+    if (term.length < 1) {
+      setProductSearchResults(null)
+      return
+    }
+    // For single-character searches, use client-side filter only
+    if (term.length === 1) {
       setProductSearchResults(null)
       return
     }
     setIsSearchingProducts(true)
     const timer = setTimeout(async () => {
       try {
-        const { data } = await getProducts(1, 50, { search: term })
+        const { data } = await getProducts(1, 100, { search: term })
         setProductSearchResults(data || [])
       } catch (error) {
         console.error('Product search failed:', error)
@@ -176,12 +182,29 @@ export function EditQuoteSheet({ open, onClose, quote, onSuccess }: EditQuoteShe
     return () => clearTimeout(timer)
   }, [productSearchTerm, open])
 
-  // Below the search threshold, fall back to filtering the initially loaded page.
-  const filteredProducts = productSearchResults !== null ? productSearchResults : products.filter(product =>
-    product.name?.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
-    product.sku?.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
-    product.description?.toLowerCase().includes(productSearchTerm.toLowerCase())
-  )
+  // Fuzzy matching: checks if search term characters appear in sequence (case-insensitive)
+  const fuzzyMatch = (text: string | null | undefined, query: string) => {
+    if (!text) return false
+    const t = text.toLowerCase()
+    const q = query.toLowerCase()
+    let tIndex = 0
+    for (let i = 0; i < q.length; i++) {
+      tIndex = t.indexOf(q[i], tIndex)
+      if (tIndex === -1) return false
+      tIndex++
+    }
+    return true
+  }
+
+  const filteredProducts = productSearchResults !== null ? productSearchResults : products.filter(product => {
+    const searchTerm = productSearchTerm.toLowerCase().trim()
+    if (!searchTerm) return true
+    return (
+      fuzzyMatch(product.name, searchTerm) ||
+      fuzzyMatch(product.sku, searchTerm) ||
+      fuzzyMatch(product.description, searchTerm)
+    )
+  })
 
   const addLineItem = () => {
     append({
@@ -223,7 +246,7 @@ export function EditQuoteSheet({ open, onClose, quote, onSuccess }: EditQuoteShe
         form.setValue(`items.${index}.description`, product.name)
       }
       form.setValue(`items.${index}.unit_price`, parseFloat(item.price || "0"))
-      form.setValue(`items.${index}.price_label`, null)
+      form.setValue(`items.${index}.price_label`, DEFAULT_PRICE_CODE)
     }
 
     setShowProductSearch(null)
@@ -824,25 +847,27 @@ export function EditQuoteSheet({ open, onClose, quote, onSuccess }: EditQuoteShe
                         {(() => {
                           const productId = form.watch(`items.${index}.product_id`)
                           const product = products.find(p => p.id === productId)
-                          const tiers = (product as any)?.price_tiers as { tier_name: string; price: number | string }[] | undefined
-                          if (!tiers || tiers.length === 0) return null
+                          const variantId = form.watch(`items.${index}.variant_id`)
+                          const variant = (product as any)?.variants?.find((v: any) => v.id === variantId)
+                          const options = priceOptionsFor(product, variant)
+                          if (options.length === 0) return null
                           return (
                             <Select
                               value={form.watch(`items.${index}.price_label`) || ""}
-                              onValueChange={(label) => {
-                                const tier = tiers.find(t => t.tier_name === label)
-                                if (!tier) return
-                                form.setValue(`items.${index}.unit_price`, Number(tier.price))
-                                form.setValue(`items.${index}.price_label`, label)
+                              onValueChange={(code) => {
+                                const option = options.find(o => o.code === code)
+                                if (!option) return
+                                form.setValue(`items.${index}.unit_price`, option.price)
+                                form.setValue(`items.${index}.price_label`, code)
                               }}
                             >
                               <SelectTrigger className="h-7 text-xs mb-1 px-2">
                                 <SelectValue placeholder="Select price..." />
                               </SelectTrigger>
                               <SelectContent>
-                                {tiers.map((t) => (
-                                  <SelectItem key={t.tier_name} value={t.tier_name} className="text-xs">
-                                    {t.tier_name} — {Number(t.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                {options.map((o) => (
+                                  <SelectItem key={o.code} value={o.code} className="text-xs">
+                                    {o.code} — {o.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                   </SelectItem>
                                 ))}
                               </SelectContent>
@@ -859,11 +884,12 @@ export function EditQuoteSheet({ open, onClose, quote, onSuccess }: EditQuoteShe
                             onChange: (e) => {
                               const productId = form.getValues(`items.${index}.product_id`)
                               const product = products.find(p => p.id === productId)
-                              const tiers = (product as any)?.price_tiers as { tier_name: string; price: number | string }[] | undefined
+                              const variantId = form.getValues(`items.${index}.variant_id`)
+                              const variant = (product as any)?.variants?.find((v: any) => v.id === variantId)
                               const label = form.getValues(`items.${index}.price_label`)
-                              const tier = tiers?.find(t => t.tier_name === label)
+                              const option = priceOptionsFor(product, variant).find(o => o.code === label)
                               const typed = parseFloat(e.target.value)
-                              if (!tier || Number(tier.price) !== typed) {
+                              if (!option || option.price !== typed) {
                                 form.setValue(`items.${index}.price_label`, "Custom")
                               }
                             },

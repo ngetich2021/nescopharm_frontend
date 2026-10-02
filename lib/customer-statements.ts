@@ -33,6 +33,51 @@ export interface StatementCheque {
   status: string
 }
 
+export interface PendingBill {
+  invoice_id: string
+  invoice_number: string
+  invoice_date: string
+  particulars: string
+  opening_amount: string | number
+  pending_amount: string | number
+  due_date: string
+  overdue_days: number
+}
+
+export interface CompanyPaymentDetails {
+  bank_name?: string | null
+  account_name?: string | null
+  account_number?: string | null
+  bank_branch?: string | null
+  mpesa_paybill?: string | null
+  mpesa_account_number?: string | null
+}
+
+export interface StatementTransaction {
+  date: string
+  type: "opening" | "invoice" | "payment" | "credit_note"
+  reference: string
+  description: string
+  debit: number | null
+  credit: number | null
+  balance: number
+}
+
+export interface StatementAgeing {
+  as_at: string
+  buckets: { label: string; amount: number }[]
+  unallocated: number
+  total: number
+}
+
+export interface StatementAccount {
+  account_number: string | null
+  payment_method: string | null
+  credit_days: number | null
+  credit_limit: number | null
+  available_credit: number | null
+}
+
 export interface CustomerStatement {
   customer: {
     id: string
@@ -48,6 +93,7 @@ export interface CustomerStatement {
     name: string
     logo_url: string | null
     letterhead_url: string | null
+    payment_details?: CompanyPaymentDetails | null
   } | null
   period: {
     from: string
@@ -56,10 +102,14 @@ export interface CustomerStatement {
   }
   opening_balance: number
   closing_balance: number
+  account: StatementAccount
+  transactions: StatementTransaction[]
+  ageing: StatementAgeing
   invoices: StatementInvoice[]
   payments: StatementPayment[]
   credit_notes: StatementCreditNote[]
   pd_cheques: StatementCheque[]
+  pending_bills: PendingBill[]
   summary: {
     invoices_count: number
     invoices_total: number

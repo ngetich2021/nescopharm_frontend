@@ -156,21 +156,35 @@ export function ProductSearch({ onAddToCart }: ProductSearchProps) {
   // product with 40 variants yields 40 independently searchable/addable items.
   const allItems = useMemo(() => buildSearchItems(allProducts), [allProducts])
 
+  // Fuzzy matching: checks if search term characters appear in sequence (case-insensitive)
+  const fuzzyMatch = (text: string | null | undefined, query: string): boolean => {
+    if (!text) return false
+    const t = text.toLowerCase()
+    const q = query.toLowerCase()
+    let tIndex = 0
+    for (let i = 0; i < q.length; i++) {
+      tIndex = t.indexOf(q[i], tIndex)
+      if (tIndex === -1) return false
+      tIndex++
+    }
+    return true
+  }
+
   // Filter items by search and category
   const filteredItems = allItems.filter((item) => {
     const term = searchTerm.toLowerCase();
     const product = item.product
     const matchesSearch =
       !searchTerm ||
-      item.name?.toLowerCase().includes(term) ||
-      item.sku.toLowerCase().includes(term) ||
+      fuzzyMatch(item.name, term) ||
+      fuzzyMatch(item.sku, term) ||
       // Also match the parent product's own name/SKU, so e.g. searching
       // "Suture" still surfaces all of its variant cards.
-      product.name?.toLowerCase().includes(term) ||
-      (product.sku || "").toLowerCase().includes(term) ||
+      fuzzyMatch(product.name, term) ||
+      fuzzyMatch(product.sku || "", term) ||
       (typeof product.category === 'string'
-        ? (product.category || "").toLowerCase().includes(term)
-        : ((product.category as any)?.name || "").toLowerCase().includes(term)
+        ? fuzzyMatch(product.category || "", term)
+        : fuzzyMatch((product.category as any)?.name || "", term)
       );
     const matchesCategory = selectedCategory === "All" ||
       (typeof product.category === 'string'

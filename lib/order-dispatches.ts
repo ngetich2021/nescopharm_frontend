@@ -128,6 +128,13 @@ export interface OrderDispatch {
       customer_number?: string;
       customer_type?: string | null;
       business_name?: string | null;
+      address?: string | null;
+      city?: string | null;
+      state?: string | null;
+      region?: string | null;
+      county?: string | null;
+      country?: string | null;
+      postal_code?: string | null;
     };
   };
 
@@ -136,16 +143,62 @@ export interface OrderDispatch {
     name: string;
   } | null;
 
+  // Note: delivery_locations has no single "address"/"name" column - the
+  // full address is assembled from house_number + street + estate +
+  // landmark, and it has no region/state/county (that granularity only
+  // lives on the customer record).
   delivery_location?: {
     id: string;
-    name: string;
-    address: string;
+    customer_id?: string;
+    house_number?: string | null;
+    estate?: string | null;
+    street?: string | null;
+    city?: string | null;
+    country?: string | null;
+    landmark?: string | null;
+    location_note?: string | null;
+    is_default?: boolean;
+    [key: string]: any;
   } | null;
 
   logistic?: {
     id: string;
-    logistics_number: string;
     status: string;
+    delivery_status?: string;
+    payment_status?: string;
+    delivery_invoice_id?: string | null;
+    tracking_number?: string | null;
+    driver_name?: string | null;
+    driver_contact?: string | null;
+    vehicle_registration?: string | null;
+    vehicle_type?: string | null;
+    vehicle_id?: string | null;
+    delivery_method?: string | null;
+    logistics_provider?: string | null;
+    recipient_name?: string | null;
+    recipient_phone?: string | null;
+    delivery_address?: string | null;
+    delivery_location?: string | null;
+    city?: string | null;
+    state?: string | null;
+    region?: string | null;
+    country?: string | null;
+    estimated_delivery_time?: string | null;
+    actual_delivery_time?: string | null;
+    notes?: string | null;
+    delivery_note_file?: string | null;
+    delivery_note_url?: string | null;
+    delivery_note_status?: 'pending_review' | 'approved' | 'resubmit_requested' | null;
+    delivery_note_uploaded_at?: string | null;
+    delivery_note_review_comment?: string | null;
+    delivery_note_reviewed_at?: string | null;
+    delivery_person?: {
+      id: string;
+      full_name?: string;
+      phone_number?: string;
+      [key: string]: any;
+    } | null;
+    [key: string]: any;
   } | null;
 
   // Legacy or optional fields kept for compatibility if needed, but primary source is above
@@ -215,11 +268,12 @@ export interface CreateLogisticsFromDispatchRequest {
 }
 
 export interface MarkDeliveredRequest {
-  delivered_at: string;
-  received_by: string;
-  receiver_phone?: string;
-  delivery_notes?: string;
-  signature_image?: string;
+  items: Array<{
+    item_id: string;
+    delivered_quantity: number;
+    damaged_quantity: number;
+    delivery_notes?: string;
+  }>;
 }
 
 // ============================================

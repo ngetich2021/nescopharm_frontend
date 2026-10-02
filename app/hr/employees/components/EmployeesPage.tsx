@@ -27,9 +27,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { 
-  Search, 
-  Plus, 
+import {
+  Search,
+  Plus,
   Filter,
   Users,
   DollarSign,
@@ -39,7 +39,8 @@ import {
   Calendar,
   Eye,
   Edit,
-  Trash2
+  Trash2,
+  Download
 } from "lucide-react"
 
 import { employeesApi, Employee } from "@/lib/employees"
@@ -225,6 +226,49 @@ export function EmployeesPage() {
     fetchEmployeeStatistics()
   }
 
+  const handleExportExcel = () => {
+    if (employees.length === 0) {
+      toast({
+        title: "No Data",
+        description: "No employees to export.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const headers = ["Employee #", "Name", "Email", "Phone", "Department", "Position", "Employment Type", "Hire Date", "Basic Salary", "Status"]
+    const rows = employees.map(emp => [
+      emp.employee_number || "",
+      `${emp.first_name || ""} ${emp.last_name || ""}`.trim(),
+      emp.email || "",
+      emp.phone_number || "",
+      emp.department || "",
+      emp.position || "",
+      emp.employment_type || "",
+      emp.hire_date ? new Date(emp.hire_date).toLocaleDateString() : "",
+      emp.basic_salary ? emp.basic_salary.toLocaleString() : "",
+      emp.termination_date ? "Terminated" : "Active"
+    ])
+
+    let csvContent = headers.map(h => `"${h}"`).join(",") + "\n"
+    rows.forEach(row => {
+      csvContent += row.map(cell => `"${String(cell || "").replace(/"/g, '""')}"`).join(",") + "\n"
+    })
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" })
+    const link = document.createElement("a")
+    const url = URL.createObjectURL(blob)
+    link.setAttribute("href", url)
+    link.setAttribute("download", `employees_${new Date().toISOString().slice(0, 10)}.csv`)
+    link.click()
+    URL.revokeObjectURL(url)
+
+    toast({
+      title: "Success",
+      description: `Exported ${employees.length} employees to Excel.`,
+    })
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -302,6 +346,7 @@ export function EmployeesPage() {
           onRefresh={handleRefresh}
           onCreateNew={() => setShowCreateSheet(true)}
           onTerminateEmployee={handleTerminateEmployee}
+          onExportExcel={handleExportExcel}
         />
       
       {/* Create Employee Sheet */}

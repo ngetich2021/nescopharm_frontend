@@ -110,3 +110,70 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Print Styles for Warehouse Delivery Notes */
+@media print {
+  body {
+    background: white;
+  }
+
+  .sheet-content {
+    box-shadow: none;
+    padding: 0;
+  }
+
+  /* Hide non-printable elements */
+  button,
+  [role="button"],
+  .sheet-close,
+  .sheet-overlay,
+  nav,
+  .sidebar,
+  [data-no-print] {
+    display: none !important;
+  }
+
+  /* Optimize card layout for printing */
+  .bg-amber-50 {
+    background: white !important;
+    border: 2px solid #333 !important;
+  }
+
+  .bg-amber-100\/50 {
+    background: #f5f5f5 !important;
+  }
+
+  /* Ensure checkboxes print properly */
+  input[type="checkbox"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border: 2px solid #333;
+    border-radius: 3px;
+    cursor: pointer;
+    accent-color: black;
+  }
+
+  /* Print-friendly spacing */
+  .border-amber-200 {
+    border-color: #333 !important;
+  }
+
+  .border-amber-100 {
+    border-color: #999 !important;
+  }
+
+  /* Ensure text is black for printing */
+  .text-amber-900,
+  .text-amber-700,
+  .text-gray-600,
+  .text-gray-500 {
+    color: #000 !important;
+  }
+
+  /* Page breaks */
+  .card {
+    page-break-inside: avoid;
+  }
+}

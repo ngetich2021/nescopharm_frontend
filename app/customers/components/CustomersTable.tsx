@@ -136,9 +136,9 @@ export function CustomersTable({
           </Select>
         </div>
         <div className="flex items-center space-x-2">
-          <PermissionGuard permissions={["can_create_customers", "can_manage_system", "can_manage_company"]}>
-            <Button 
-              onClick={onCreateNew} 
+          <PermissionGuard permissions={["can_create_customers", "can_manage_system", "can_manage_company"]} hideOnDenied>
+            <Button
+              onClick={onCreateNew}
               variant="outline"
               className="border-[primary] text-[primary] bg-white hover:bg-[primary]/10"
             >
@@ -191,9 +191,9 @@ export function CustomersTable({
                       <p className="text-sm font-medium text-gray-900">No customers found</p>
                       <p className="text-sm text-gray-500">Get started by adding your first customer</p>
                     </div>
-                    <PermissionGuard permissions={["can_create_customers", "can_manage_system", "can_manage_company"]}>
-                      <Button 
-                        onClick={onCreateNew} 
+                    <PermissionGuard permissions={["can_create_customers", "can_manage_system", "can_manage_company"]} hideOnDenied>
+                      <Button
+                        onClick={onCreateNew}
                         size="sm"
                         variant="outline"
                         className="border-primary text-primary bg-white hover:bg-primary/10"
@@ -384,14 +384,14 @@ function CustomerActionsDropdown({
             <CreditCard className="h-4 w-4 mr-2" /> View Account
           </DropdownMenuItem>
         )}
-        <PermissionGuard permissions={["can_update_customers", "can_manage_system", "can_manage_company"]}>
+        <PermissionGuard permissions={["can_update_customers", "can_manage_system", "can_manage_company"]} hideOnDenied>
           {canEdit && (
             <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onEdit(); }}>
               <Edit className="h-4 w-4 mr-2" /> Edit Customer
             </DropdownMenuItem>
           )}
         </PermissionGuard>
-        <PermissionGuard permissions={["can_delete_customers", "can_manage_system", "can_manage_company"]}>
+        <PermissionGuard permissions={["can_delete_customers", "can_manage_system", "can_manage_company"]} hideOnDenied>
           {canDelete && (
             <>
               <DropdownMenuSeparator />

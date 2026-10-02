@@ -14,8 +14,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { Plus, Search, ShoppingCart, Trash2, X, Wallet, CreditCard as CreditCardIcon } from "lucide-react"
+import { DEFAULT_PRICE_CODE, priceOptionsFor } from "@/lib/price-codes"
 import { getCreditOverage, coversOverage } from "@/lib/credit-overage"
 import { createPayment } from "@/lib/payments"
+import { orderTotals, vatRateForProduct } from "@/lib/invoice-tax"
 import { CreditOveragePrompt } from "@/components/credit-overage-prompt"
 import { InstantPaymentPrompt } from "@/components/instant-payment-prompt"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
@@ -60,11 +62,8 @@ export function CreateOrderModal({
   const [activeTab, setActiveTab] = useState("existing")
   const [customers, setCustomers] = useState<Customer[]>([])
   const [products, setProducts] = useState<ProductWithVariants[]>([])
-  const [productsPage, setProductsPage] = useState(1)
-  const [productsLastPage, setProductsLastPage] = useState<number | null>(null)
-  const [productsLoadingAll, setProductsLoadingAll] = useState(false)
-  const [allProductsLoaded, setAllProductsLoaded] = useState(false)
   const [searchResults, setSearchResults] = useState<ProductWithVariants[]>([])
+  const [searchLoading, setSearchLoading] = useState(false)
   const [companies, setCompanies] = useState<{ id: string; name: string }[]>([])
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
   const [orderItems, setOrderItems] = useState<OrderItem[]>([])
@@ -84,8 +83,8 @@ export function CreateOrderModal({
 
   // Order specific fields
   const [trackingNumber, setTrackingNumber] = useState("")
-  const [status, setStatus] = useState("Pending")
-  const [paymentStatus, setPaymentStatus] = useState("Unpaid")
+  const [status, setStatus] = useState("pending")
+  const [paymentStatus, setPaymentStatus] = useState("unpaid")
   const [salesReps, setSalesReps] = useState<SalesRep[]>([])
   const [salesRepId, setSalesRepId] = useState<string>("")
   const [amountPaid, setAmountPaid] = useState(0)
@@ -120,121 +119,50 @@ export function CreateOrderModal({
       .finally(() => setIsLoadingCreditTerms(false))
   }, [selectedCustomer?.id])
 
-  // Page size used when prefetching products
-  const PRODUCTS_PAGE_SIZE = 50
-
-  // Helper: fetch a specific page of products (optionally append)
-  async function fetchProductsPage(page: number, pageSize = PRODUCTS_PAGE_SIZE) {
-    const resp = await getProducts(page, pageSize)
-    const mapped = Array.isArray(resp.data)
-      ? resp.data.map((p) => ({ ...p, variants: Array.isArray(p.variants) ? p.variants as ProductVariant[] : [] }))
-      : []
-    return { data: mapped, pagination: resp.pagination }
-  }
-
-  // Prefetch remaining pages in the background (batched)
-  async function prefetchRemainingPages(startPage: number, lastPage: number) {
-    setProductsLoadingAll(true)
-    try {
-      const pages: number[] = []
-      for (let p = startPage; p <= lastPage; p++) pages.push(p)
-
-      // Fetch sequentially in small batches to avoid overwhelming the API
-      const batchSize = 3
-      for (let i = 0; i < pages.length; i += batchSize) {
-        const batch = pages.slice(i, i + batchSize)
-        const promises = batch.map((page) => fetchProductsPage(page))
-        // eslint-disable-next-line no-await-in-loop
-        const results = await Promise.all(promises)
-        const combined: ProductWithVariants[] = results.flatMap(r => r.data)
-        setProducts((prev) => {
-          // Merge while avoiding duplicates
-          const map = new Map(prev.map(p => [p.id, p]))
-          for (const prod of combined) map.set(prod.id, prod)
-          return Array.from(map.values())
-        })
-        setProductsPage((prev) => Math.max(prev, batch[batch.length - 1]))
-      }
-      setAllProductsLoaded(true)
-    } catch (err) {
-      console.warn("Prefetch products failed", err)
-    } finally {
-      setProductsLoadingAll(false)
-    }
-  }
-
   useEffect(() => {
     if (open) {
       fetchSalesReps().then(setSalesReps).catch(() => setSalesReps([]))
     }
   }, [open])
 
-  // When the sheet opens, start loading products: initial page then prefetch rest
-  useEffect(() => {
-    let cancelled = false
-
-    async function loadInitialProducts() {
-      if (!open) return
-      try {
-        // Fetch first page
-        const { data, pagination } = await fetchProductsPage(1)
-        if (cancelled) return
-        setProducts(data)
-        setProductsPage(pagination?.current_page || 1)
-        setProductsLastPage(pagination?.last_page || null)
-
-        // If multiple pages exist, prefetch remaining in background
-        if (pagination && pagination.last_page && pagination.last_page > pagination.current_page) {
-          // Start prefetch but don't await to keep UI snappy
-          void prefetchRemainingPages(pagination.current_page + 1, pagination.last_page)
-        } else {
-          setAllProductsLoaded(true)
-        }
-      } catch (error) {
-        console.error(error)
-        toast.error("Failed to load products")
-      }
-    }
-
-    if (open) {
-      loadInitialProducts()
-    }
-
-    return () => { cancelled = true }
-  }, [open])
-
-  // Product search behavior:
-  // - If all products are loaded, filter client-side (fast, no API calls)
-  // - If not fully loaded and user types >=2 chars, perform a server search to get matching results
+  // Products are searched server-side only; the catalog is never bulk-loaded, because each
+  // products page is slow and bulk-loading queued in front of the user's search.
   useEffect(() => {
     let cancelled = false
     const q = productSearchQuery.trim()
 
-    if (allProductsLoaded) {
-      // No API calls; client-side filtering will be done in render via `filteredProducts`
-      setSearchResults([])
-      return
-    }
-
-    // Debounced server search while prefetching
+    // Debounced server search: always use server when user types, for complete results
     const timer = setTimeout(async () => {
       if (!open) return
       if (q.length >= 2) {
+        setSearchLoading(true)
         try {
-          const { data } = await getProducts(1, PRODUCTS_PAGE_SIZE, { search: q })
+          const { data } = await getProducts(1, 100, { search: q })
           if (cancelled) return
-          setSearchResults(Array.isArray(data) ? data.map(p => ({ ...p, variants: Array.isArray(p.variants) ? p.variants as ProductVariant[] : [] })) : [])
+          const results: ProductWithVariants[] = Array.isArray(data)
+            ? data.map(p => ({ ...p, variants: Array.isArray(p.variants) ? p.variants as ProductVariant[] : [] }))
+            : []
+          setSearchResults(results)
+          // Order lines read product details from `products`, so keep every searched product there
+          setProducts(prev => {
+            const map = new Map(prev.map(p => [p.id, p]))
+            for (const prod of results) map.set(prod.id, prod)
+            return Array.from(map.values())
+          })
         } catch (err) {
           console.warn("Product search failed", err)
           setSearchResults([])
+        } finally {
+          setSearchLoading(false)
         }
       } else {
         setSearchResults([])
+        setSearchLoading(false)
       }
     }, 300)
 
     return () => { cancelled = true; clearTimeout(timer) }
-  }, [productSearchQuery, allProductsLoaded, open])
+  }, [productSearchQuery, open])
 
   const [customersLoaded, setCustomersLoaded] = useState(false)
   const [customersLoading, setCustomersLoading] = useState(false)
@@ -283,25 +211,8 @@ export function CreateOrderModal({
       })
     : []
 
-  // Products selection source:
-  // - If all products have been prefetched, filter client-side
-  // - If still prefetching and user searched >=2 chars, show server `searchResults`
-  // - Otherwise show the currently loaded products (first pages)
-  let filteredProducts: ProductWithVariants[] = []
-  const q = productSearchQuery.trim().toLowerCase()
-  if (allProductsLoaded) {
-    filteredProducts = products.filter((p) => {
-      if (!q) return true
-      return (
-        (p.name && p.name.toLowerCase().includes(q)) ||
-        (p.sku && String(p.sku).toLowerCase().includes(q))
-      )
-    })
-  } else if (q.length >= 2) {
-    filteredProducts = searchResults
-  } else {
-    filteredProducts = products
-  }
+  const q = productSearchQuery.trim()
+  const filteredProducts: ProductWithVariants[] = q.length >= 2 ? searchResults : []
 
   const handleSelectCustomer = (customer: Customer) => {
     setSelectedCustomer(customer)
@@ -345,7 +256,7 @@ export function CreateOrderModal({
       }
 
       // Calculate tax
-      const taxRate = product.is_taxable ? parseFloat(product.tax_rate?.toString() || "0") : 0
+      const taxRate = vatRateForProduct(product)
       const quantity = 1
       const taxAmount = finalUnitPrice * quantity * (taxRate / 100)
 
@@ -358,7 +269,7 @@ export function CreateOrderModal({
         variant_id: variantId,
         tax_rate: taxRate,
         tax_amount: taxAmount,
-        price_label: null,
+        price_label: DEFAULT_PRICE_CODE,
       }
       setOrderItems([
         ...orderItems,
@@ -411,20 +322,10 @@ export function CreateOrderModal({
     setOrderItems(orderItems.filter((_, i) => i !== index))
   }
 
-  const calculateSubtotal = () => {
-    return orderItems.reduce((sum, item) => sum + item.total_price, 0)
-  }
-
-  const calculateTax = () => {
-    return orderItems.reduce((sum, item) => sum + item.tax_amount, 0)
-  }
-
-  const calculateTotal = () => {
-    const subtotal = calculateSubtotal()
-    const tax = calculateTax()
-    const discountAmount = (discount / 100) * subtotal
-    return subtotal + tax - discountAmount
-  }
+  const totals = orderTotals(orderItems, discount)
+  const calculateSubtotal = () => totals.subtotal
+  const calculateTax = () => totals.tax
+  const calculateTotal = () => totals.total
 
   const creditOverage = paymentOption === 'credit' && creditTerms?.credit_days
     ? getCreditOverage(calculateTotal(), creditTerms.available_credit)
@@ -491,14 +392,14 @@ export function CreateOrderModal({
         customer_id: customerId,
         sales_rep_id: salesRepId || undefined,
         store_id: storeId,
-        status: status.toLowerCase(),
-        payment_status: paymentStatus.toLowerCase(),
+        status,
+        payment_status: paymentStatus,
         payment_option: paymentOption,
         amount_paid: amountPaid || undefined,
         // delivery_location_id: ..., // TODO: Add from UI
         // delivery_person_id: ...,
         // estimated_delivery: ...,
-        discount,
+        discount: totals.discount,
         tax: taxAmount,
         currency: "KES",
         notes,
@@ -797,13 +698,6 @@ export function CreateOrderModal({
     </Button>
   </PopoverTrigger>
   <PopoverContent className="w-[300px] p-0" align="end">
-    {/* Prefetch progress indicator */}
-    {productsLoadingAll && (
-      <div className="flex items-center gap-2 px-4 py-2 text-xs text-blue-600 bg-blue-50 border-b border-blue-200 animate-pulse">
-        <svg className="h-4 w-4 text-blue-500 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" opacity="0.2"/><path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="4" strokeLinecap="round"/></svg>
-        Loading all products for fast search...
-      </div>
-    )}
     {pendingProduct && pendingProduct.variants && pendingProduct.variants.length > 0 ? (
       <div className="p-4 space-y-2">
         <div className="font-medium mb-2">Select Variant for {pendingProduct.name}</div>
@@ -841,16 +735,18 @@ export function CreateOrderModal({
         </Button>
       </div>
     ) : (
-      <Command>
+      <Command shouldFilter={false}>
         <CommandInput
-          placeholder="Search products..."
+          placeholder="Search products by name, SKU or description..."
           value={productSearchQuery}
           onValueChange={setProductSearchQuery}
         />
         <CommandList>
           <CommandEmpty>
-            {productSearchQuery.trim().length < 2 
-              ? "Type at least 2 characters to search products" 
+            {productSearchQuery.trim().length < 2
+              ? "Type at least 2 characters to search products"
+              : searchLoading
+              ? "Searching..."
               : "No products found"}
           </CommandEmpty>
           <CommandGroup>
@@ -913,7 +809,7 @@ export function CreateOrderModal({
                           const product = products.find((p) => p.id === item.product_id)
                           return product && Array.isArray(product.variants) && product.variants.length > 0
                         }) && (
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Variation</th>
+                          <th className="sticky right-0 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50 z-10">Variation</th>
                         )}
                       </tr>
                     </thead>
@@ -929,23 +825,24 @@ export function CreateOrderModal({
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               {(() => {
-                                const tiers = (product as any)?.price_tiers as { tier_name: string; price: number | string }[] | undefined
-                                if (!tiers || tiers.length === 0) return null
+                                const variant = (product as any)?.variants?.find((v: any) => v.id === item.variant_id)
+                                const options = priceOptionsFor(product, variant)
+                                if (options.length === 0) return null
                                 return (
                                   <Select
                                     value={item.price_label || ""}
-                                    onValueChange={(label) => {
-                                      const tier = tiers.find(t => t.tier_name === label)
-                                      if (tier) handleUpdatePrice(index, Number(tier.price), label)
+                                    onValueChange={(code) => {
+                                      const option = options.find(o => o.code === code)
+                                      if (option) handleUpdatePrice(index, option.price, code)
                                     }}
                                   >
                                     <SelectTrigger className="h-7 w-24 text-xs mb-1 px-2">
                                       <SelectValue placeholder="Price..." />
                                     </SelectTrigger>
                                     <SelectContent>
-                                      {tiers.map((t) => (
-                                        <SelectItem key={t.tier_name} value={t.tier_name} className="text-xs">
-                                          {t.tier_name} — {Number(t.price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                      {options.map((o) => (
+                                        <SelectItem key={o.code} value={o.code} className="text-xs">
+                                          {o.code} — {o.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                         </SelectItem>
                                       ))}
                                     </SelectContent>
@@ -1008,25 +905,33 @@ export function CreateOrderModal({
                                 <Trash2 className="h-4 w-4 text-red-500" />
                               </Button>
                             </td>
-                            {variants.length > 0 && (
-                              <td className="px-4 py-3 whitespace-nowrap">
-                                <Select
-                                  value={selectedVariants[itemKey] || item.variant_id || ""}
-                                  onValueChange={(value) => handleSelectVariant(item.product_id, value, index)}
-                                >
-                                  <SelectTrigger className="w-[120px]">
-                                    <SelectValue placeholder="Select variant" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {variants.map((variant: ProductVariant) => (
-                                      <SelectItem key={variant.id} value={String(variant.id)}>
-                                        {variant.name}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </td>
-                            )}
+                            {variants.length > 0 && (() => {
+                              const currentVariantId = selectedVariants[itemKey] || item.variant_id || ""
+                              const currentVariant = variants.find((v) => String(v.id) === String(currentVariantId))
+                              const displayName = currentVariant?.name || "No variant selected"
+                              return (
+                                <td className="sticky right-0 px-4 py-3 bg-white z-10 align-top">
+                                  <div className="mb-1 max-w-[220px] whitespace-normal break-words text-sm font-medium text-gray-900">
+                                    {displayName}
+                                  </div>
+                                  <Select
+                                    value={currentVariantId}
+                                    onValueChange={(value) => handleSelectVariant(item.product_id, value, index)}
+                                  >
+                                    <SelectTrigger className="w-full max-w-[200px]">
+                                      <SelectValue placeholder="Select variant" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {variants.map((variant: ProductVariant) => (
+                                        <SelectItem key={variant.id} value={String(variant.id)}>
+                                          {variant.name}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </td>
+                              )
+                            })()}
                           </tr>
                         )
                       })}
@@ -1036,12 +941,12 @@ export function CreateOrderModal({
 
                 <div className="border rounded-md p-4 space-y-4">
                   <div className="flex justify-between items-center">
-                    <span className="text-sm">Subtotal:</span>
+                    <span className="text-sm">Subtotal (excl. VAT):</span>
                     <span className="font-medium">Ksh. {calculateSubtotal().toFixed(2)}</span>
                   </div>
 
                   <div className="flex items-center justify-between">
-                    <span className="text-sm">Tax Amount:</span>
+                    <span className="text-sm">VAT (VATable items only):</span>
                     <span className="font-medium">Ksh. {calculateTax().toFixed(2)}</span>
                   </div>
 
@@ -1058,7 +963,7 @@ export function CreateOrderModal({
                         className="w-[80px]"
                       />
                     </div>
-                    <span className="font-medium">-Ksh. {((discount / 100) * calculateSubtotal()).toFixed(2)}</span>
+                    <span className="font-medium">-Ksh. {totals.discount.toFixed(2)}</span>
                   </div>
 
                   <div className="pt-2 border-t">
@@ -1161,10 +1066,10 @@ export function CreateOrderModal({
                     <SelectValue placeholder="Select status" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Pending">Pending</SelectItem>
-                    <SelectItem value="Processing">Processing</SelectItem>
-                    <SelectItem value="Completed">Completed</SelectItem>
-                    <SelectItem value="Cancelled">Cancelled</SelectItem>
+                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="processing">Processing</SelectItem>
+                    <SelectItem value="completed">Completed</SelectItem>
+                    <SelectItem value="cancelled">Cancelled</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1176,10 +1081,9 @@ export function CreateOrderModal({
                     <SelectValue placeholder="Select payment status" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Unpaid">Unpaid</SelectItem>
-                    <SelectItem value="Partially Paid">Partially Paid</SelectItem>
-                    <SelectItem value="Paid">Paid</SelectItem>
-                    <SelectItem value="Refunded">Refunded</SelectItem>
+                    <SelectItem value="unpaid">Unpaid</SelectItem>
+                    <SelectItem value="partial">Partially Paid</SelectItem>
+                    <SelectItem value="paid">Paid</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

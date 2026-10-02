@@ -36,6 +36,7 @@ export interface Logistics {
   delivery_person_id: string | null;
   delivery_method: string;
   tracking_number: string;
+  transporter_invoice_number?: string | null;
   delivery_status: string;
   recipient_name: string;
   recipient_phone: string;
@@ -57,6 +58,14 @@ export interface Logistics {
   dispatch_time: string | null;
   estimated_delivery_time: string | null;
   actual_delivery_time: string | null;
+  delivery_note_file?: string | null;
+  delivery_note_url?: string | null;
+  delivery_note_uploaded_at?: string | null;
+  delivery_note_status?: 'pending_review' | 'approved' | 'resubmit_requested' | null;
+  delivery_note_reviewed_at?: string | null;
+  delivery_note_review_comment?: string | null;
+  delivery_note_reviewed_by?: { id: string; first_name?: string; last_name?: string } | string | null;
+  notes?: string | null;
   created_at: string;
   updated_at: string;
   company_id: string;
@@ -265,6 +274,7 @@ export interface CreateLogisticsData {
   vehicle_type?: string;
   vehicle_id?: string;
   tracking_number?: string;
+  transporter_invoice_number?: string;
   recipient_name?: string;
   recipient_phone?: string;
   delivery_address?: string;
@@ -288,6 +298,11 @@ export interface CreateLogisticsData {
   cheque_maturity_date?: string;
   estimated_delivery_time?: string;
   notes?: string;
+  // Rate-based path: pick an approved transporter+zone rate and enter the
+  // carton count - the app computes delivery_cost and raises a Delivery
+  // Invoice for accounting instead of the manual payment fields above.
+  delivery_rate_id?: string;
+  number_of_cartons?: number;
 }
 
 interface CreateLogisticsResponse {
@@ -350,4 +365,46 @@ export async function createLogistics(data: CreateLogisticsData): Promise<Logist
   } catch (error: any) {
     throw new Error(`Failed to create logistics entry: ${error.message || 'Unknown error'}`);
   }
+}
+
+export async function uploadDeliveryNote(logisticsId: string, file: File): Promise<Logistics> {
+  try {
+    const formData = new FormData();
+    formData.append('delivery_note', file);
+
+    const response = await apiCall<CreateLogisticsResponse>(
+      `/logistics/${logisticsId}/upload-delivery-note`,
+      'POST',
+      formData,
+      true
+    );
+
+    if (response.status === 'success' && response.logistic) {
+      return response.logistic;
+    } else {
+      const errorMessage = typeof response.message === 'string'
+        ? response.message
+        : 'Failed to upload delivery note';
+      throw new Error(errorMessage);
+    }
+  } catch (error: any) {
+    throw new Error(`Failed to upload delivery note: ${error.message || 'Unknown error'}`);
+  }
+}
+
+export async function reviewDeliveryNote(
+  logisticsId: string,
+  action: 'approve' | 'resubmit',
+  comment?: string
+): Promise<Logistics> {
+  const response = await apiCall<CreateLogisticsResponse>(
+    `/logistics/${logisticsId}/review-delivery-note`,
+    'POST',
+    { action, comment },
+    true
+  );
+  if (response.status === 'success' && response.logistic) {
+    return response.logistic;
+  }
+  throw new Error(typeof response.message === 'string' ? response.message : 'Failed to review delivery note');
 }

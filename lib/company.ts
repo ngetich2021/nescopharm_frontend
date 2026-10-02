@@ -14,6 +14,12 @@ export interface Company {
   website?: string | null
   logo_url?: string | null
   letterhead_url?: string | null
+  bank_name?: string | null
+  bank_account_name?: string | null
+  bank_account_number?: string | null
+  bank_branch?: string | null
+  mpesa_paybill?: string | null
+  mpesa_account_number?: string | null
   is_active: boolean
   created_at: string
   updated_at: string

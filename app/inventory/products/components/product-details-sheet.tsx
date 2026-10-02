@@ -264,7 +264,7 @@ export function ProductDetailsSheet({ open, onOpenChange, product, onEdit, isLoa
                 <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl p-5 border border-green-200 shadow-sm">
                   <div className="flex flex-wrap items-end justify-between gap-4">
                     <div>
-                      <p className="text-sm text-green-700 mb-1">Selling Price</p>
+                      <p className="text-sm text-green-700 mb-1">NSPV</p>
                       <p className="text-3xl font-bold text-green-900">KES {productPrice.toLocaleString(undefined, {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2

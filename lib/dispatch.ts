@@ -96,11 +96,25 @@ export interface User {
   updated_at: string;
 }
 
+export interface InventoryBatch {
+  id: string;
+  product_id: string;
+  variant_id?: string | null;
+  store_id: string;
+  batch_number: string;
+  expiry_date?: string | null;
+  quantity_available: number;
+  quantity_allocated: number;
+  status: string;
+  store?: { id: string; name: string } | null;
+}
+
 export interface DispatchItem {
   id: string;
   dispatch_id: string;
   product_id: string;
   variant_id?: string | null;
+  batch_id?: string | null;
   quantity: number;
   received_quantity: number;
   notes?: string | null;
@@ -114,6 +128,7 @@ export interface DispatchItem {
   reminder_status?: string | null;
   product: Product;
   variant?: Variant | null;
+  batch?: InventoryBatch | null;
 }
 
 export interface Dispatch {
@@ -167,9 +182,11 @@ export async function createDispatch(payload: {
   to_user_id: string;
   type: string;
   notes?: string;
+  requisition_id?: string;
   items: Array<{
     product_id: string;
     variant_id?: string;
+    batch_id?: string;
     quantity: number;
     is_returnable: boolean;
     return_date?: string;
@@ -178,6 +195,19 @@ export async function createDispatch(payload: {
 }): Promise<{ status: string; message: string; dispatch: Dispatch }> {
   const response = await apiCall<{ status: string; message: string; dispatch: Dispatch }>("/whs/dispatches", "POST", payload, true);
   return response;
+}
+
+// List available batches for a product (FEFO-sorted), optionally scoped to a store/variant
+export async function getProductBatches(
+  productId: string,
+  params?: { store_id?: string; variant_id?: string }
+): Promise<InventoryBatch[]> {
+  const q = new URLSearchParams();
+  if (params?.store_id) q.append("store_id", params.store_id);
+  if (params?.variant_id) q.append("variant_id", params.variant_id);
+  const qs = q.toString() ? `?${q}` : "";
+  const response = await apiCall<{ status: string; data: { batches: InventoryBatch[] } }>(`/products/${productId}/inventory/availability${qs}`, "GET", undefined, true);
+  return response.data?.batches ?? [];
 }
 
 // List Dispatches

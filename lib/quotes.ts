@@ -14,6 +14,18 @@ export interface Quote {
     last_name: string
     full_name?: string
   } | null
+  sales_rep_id?: string | null
+  sales_rep?: SalesRep | null
+  original_submitted_by?: { id: string; first_name: string; last_name: string } | null
+  payment_terms?: string
+  totals?: {
+    subtotal: number
+    discount: number
+    vat: number
+    total: number
+    vat_lines: { label: string; rate: number; taxable: number; amount: number }[]
+  }
+  company?: { id: string; name: string; logo_url?: string | null; letterhead_url?: string | null } | null
   total_amount: string
   status: string
   company_id: string
@@ -82,6 +94,11 @@ export interface Quote {
     // was used for this line, or "Custom" for a hand-typed price - internal
     // reference only, never shown on a customer-facing quote document.
     price_label?: string | null
+    item_code?: string | null
+    pack_size?: string
+    tax_label?: string
+    tax_rate?: number
+    tax_amount?: number
     total_price: string
     company_id: string
     created_at: string
@@ -187,6 +204,22 @@ export interface Quote {
       }
     }
   }>
+}
+
+export interface SalesRep {
+  id: string
+  first_name: string
+  last_name: string
+  email?: string
+}
+
+export async function fetchQuoteSalesReps(): Promise<SalesRep[]> {
+  const response = await apiCall<{ data: SalesRep[] }>("/quotes/sales-reps", "GET", undefined, true)
+  return response.data || []
+}
+
+export async function assignQuoteSalesRep(quoteId: string, salesRepId: string | null): Promise<void> {
+  await apiCall(`/quotes/${quoteId}/sales-rep`, "PATCH", { sales_rep_id: salesRepId }, true)
 }
 
 // API response interfaces
@@ -372,6 +405,7 @@ export async function getQuoteById(quoteId: string): Promise<Quote | null> {
  */
 export async function createQuote(quoteData: {
   customer_id: string;
+  sales_rep_id?: string | null;
   items: { product_id: string; variant_id?: string | null; quantity: number; unit_price: string; price_label?: string | null }[];
   notes?: string;
   valid_until?: string;
@@ -542,10 +576,7 @@ export async function deleteQuote(quoteId: string): Promise<boolean> {
 /**
  * Converts a quote to an order.
  */
-export async function convertQuoteToOrder(
-  quoteId: string,
-  options: { payment_option?: "instant" | "credit" } = {}
-): Promise<any> {
+export async function convertQuoteToOrder(quoteId: string): Promise<any> {
   // Server-side check
   if (typeof window === 'undefined') {
     throw new Error("convertQuoteToOrder must be called client-side");
@@ -565,7 +596,7 @@ export async function convertQuoteToOrder(
       const response = await apiCall<{status: string; order?: any; message?: string}>(
         `/quotes/${quoteId}/convert-to-order`,
         "POST",
-        options.payment_option ? { payment_option: options.payment_option } : undefined,
+        undefined,
         true
       );
       
@@ -601,10 +632,7 @@ export async function convertQuoteToOrder(
  * Rep confirms a quote they originally submitted from POS (after staff have
  * reviewed/adjusted pricing) - turns it into a real order.
  */
-export async function confirmQuote(
-  quoteId: string,
-  options: { payment_option?: "instant" | "credit" } = {}
-): Promise<any> {
+export async function confirmQuote(quoteId: string): Promise<any> {
   if (typeof window === 'undefined') {
     throw new Error("confirmQuote must be called client-side");
   }
@@ -618,7 +646,7 @@ export async function confirmQuote(
     const response = await apiCall<{ status: string; order?: any; message?: string }>(
       `/quotes/${quoteId}/confirm`,
       "POST",
-      options.payment_option ? { payment_option: options.payment_option } : undefined,
+      undefined,
       true
     );
 

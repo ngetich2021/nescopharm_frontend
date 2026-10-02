@@ -200,11 +200,19 @@ export function CreateCustomerModal({
   };
 
   const validateForm = () => {
-    // Only name is required for creating a customer
     if (!name.trim()) {
       toast({
         title: "Validation Error",
         description: "Customer name is required",
+        variant: "destructive",
+      });
+      return false;
+    }
+
+    if (customerType === "company" && !pinNumber.trim()) {
+      toast({
+        title: "Validation Error",
+        description: "KRA PIN is required for company customers",
         variant: "destructive",
       });
       return false;
@@ -972,7 +980,7 @@ export function CreateCustomerModal({
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="pinNumber">KRA PIN</Label>
+                      <Label htmlFor="pinNumber">KRA PIN{customerType === "company" ? " *" : ""}</Label>
                       <Input
                         id="pinNumber"
                         value={pinNumber}

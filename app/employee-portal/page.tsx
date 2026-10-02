@@ -13,6 +13,7 @@ import {
   createEmployeePortalLeaveRequest,
   createEmployeePortalSalaryAdvance,
   createEmployeePortalDailyReport,
+  deleteEmployeePortalDailyReport,
   getEmployeePortalLeaveRequests,
   getEmployeePortalProfile,
   getEmployeePortalSalaryAdvances,
@@ -20,7 +21,7 @@ import {
 } from "@/lib/employee-portal";
 import { getLeaveRequests, approveLeaveRequest, updateLeaveRequest } from "@/lib/leave";
 import { getSalaryAdvances, approveSalaryAdvance, updateSalaryAdvance } from "@/lib/salary-advance";
-import { getDailyReports, approveDailyReport, rejectDailyReport, isSunday, DEFAULT_DAILY_REPORT_ENTRIES } from "@/lib/daily-reports";
+import { getDailyReports, approveDailyReport, rejectDailyReport, isSunday, getEntriesForDate, saveDraftReport, getDraftReport, clearDraftReport, isFormComplete, shouldAutoSubmit } from "@/lib/daily-reports";
 import { useAuth } from "@/lib/auth-context";
 import type { Employee } from "@/lib/employees";
 import type { LeaveRequest } from "@/lib/leave";
@@ -56,10 +57,11 @@ function getStatusClass(status?: string | null) {
 
 export default function EmployeePortalPage() {
   const { toast } = useToast();
-  const { hasPermission } = useAuth();
+  const { hasPermission, user } = useAuth();
   const canApproveLeave = hasPermission("can_approve_leave");
   const canApproveSalary = hasPermission("can_approve_salary_changes");
   const canApproveDailyReports = hasPermission("can_approve_daily_reports");
+  const isGMOrDirector = user?.role?.name && (user.role.name === 'GM' || user.role.name === 'Director');
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
   const [salaryAdvances, setSalaryAdvances] = useState<SalaryAdvanceRequest[]>([]);
@@ -86,11 +88,21 @@ export default function EmployeePortalPage() {
     key_achievements: string;
     pending_work: string;
   }>({
-    report_date: "",
-    entries: DEFAULT_DAILY_REPORT_ENTRIES.map((entry) => ({ ...entry })),
+    report_date: new Date().toISOString().split('T')[0], // Set to today
+    entries: getEntriesForDate(new Date().toISOString().split('T')[0]).map((entry) => ({ ...entry })),
     key_achievements: "",
     pending_work: "",
   });
+  const [editingReportId, setEditingReportId] = useState<string | null>(null);
+  const [viewingReportId, setViewingReportId] = useState<string | null>(null);
+  const [editReportForm, setEditReportForm] = useState<{
+    report_date: string;
+    entries: DailyWorkReportEntry[];
+    key_achievements: string;
+    pending_work: string;
+  } | null>(null);
+  const [submittingEditReport, setSubmittingEditReport] = useState(false);
+  const [reportDateFilter, setReportDateFilter] = useState<string>("");
   const [submittingLeave, setSubmittingLeave] = useState(false);
   const [submittingAdvance, setSubmittingAdvance] = useState(false);
   const [submittingDailyReport, setSubmittingDailyReport] = useState(false);
@@ -118,6 +130,7 @@ export default function EmployeePortalPage() {
       setLoading(false);
     }
   };
+
 
   // Separate from the self-service data above: what THIS user (as an
   // approver - GM/Director, or explicitly granted approval rights) needs to
@@ -223,42 +236,101 @@ export default function EmployeePortalPage() {
     }
   };
 
-  const updateDailyReportEntry = (index: number, field: keyof DailyWorkReportEntry, value: string) => {
+  const updateDailyReportEntry = (index: number, value: string) => {
     setDailyReportForm((prev) => ({
       ...prev,
-      entries: prev.entries.map((entry, i) => (i === index ? { ...entry, [field]: value } : entry)),
+      entries: prev.entries.map((entry, i) => (i === index ? { ...entry, activity: value } : entry)),
     }));
   };
 
-  const addDailyReportEntry = () => {
+  const handleDailyReportDateChange = (date: string) => {
     setDailyReportForm((prev) => ({
       ...prev,
-      entries: [...prev.entries, { time: "", activity: "", remarks: "" }],
+      report_date: date,
+      entries: getEntriesForDate(date).map((entry) => ({ ...entry })),
     }));
+
+    // Load any existing draft for this date
+    const draft = getDraftReport(date);
+    if (draft) {
+      setDailyReportForm((prev) => ({
+        ...prev,
+        ...draft,
+        report_date: date,
+      }));
+    }
   };
 
-  const removeDailyReportEntry = (index: number) => {
-    setDailyReportForm((prev) => ({
-      ...prev,
-      entries: prev.entries.filter((_, i) => i !== index),
-    }));
-  };
-
-  const handleDailyReportSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (submittingDailyReport) return;
+  const handleSaveDraft = () => {
     if (!dailyReportForm.report_date) {
       toast({ title: "Error", description: "Please select a report date.", variant: "destructive" });
       return;
     }
-    if (isSunday(dailyReportForm.report_date)) {
-      toast({
-        title: "Sundays are skipped",
-        description: "Daily work reports are not required on Sundays. Please pick another date.",
-        variant: "destructive",
+    saveDraftReport(dailyReportForm.report_date, dailyReportForm);
+    toast({ title: "Draft saved", description: "Your progress has been saved." });
+  };
+
+  const handleEditReport = (report: DailyWorkReport) => {
+    setEditingReportId(report.id);
+    setEditReportForm({
+      report_date: report.reportDate,
+      entries: report.entries || [],
+      key_achievements: report.keyAchievements || "",
+      pending_work: report.pendingWork || "",
+    });
+  };
+
+  const handleEditReportSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingReportId || !editReportForm) return;
+    if (submittingEditReport) return;
+
+    setSubmittingEditReport(true);
+    try {
+      // Delete old report and create new one with updated data
+      await deleteEmployeePortalDailyReport(editingReportId);
+
+      await createEmployeePortalDailyReport({
+        report_date: editReportForm.report_date,
+        entries: editReportForm.entries,
+        key_achievements: editReportForm.key_achievements,
+        pending_work: editReportForm.pending_work,
       });
+
+      toast({ title: "Success", description: "Daily work report updated and resubmitted." });
+      setEditingReportId(null);
+      setEditReportForm(null);
+      loadData();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message || "Failed to update daily work report.", variant: "destructive" });
+    } finally {
+      setSubmittingEditReport(false);
+    }
+  };
+
+  const handleDailyReportSubmit = async (e: React.FormEvent, isAutoSubmit: boolean = false) => {
+    if (e && typeof e.preventDefault === 'function') {
+      e.preventDefault();
+    }
+
+    if (submittingDailyReport) return;
+    if (!dailyReportForm.report_date) {
+      if (!isAutoSubmit) {
+        toast({ title: "Error", description: "Please select a report date.", variant: "destructive" });
+      }
       return;
     }
+    if (isSunday(dailyReportForm.report_date)) {
+      if (!isAutoSubmit) {
+        toast({
+          title: "Sundays are skipped",
+          description: "Daily work reports are not required on Sundays. Please pick another date.",
+          variant: "destructive",
+        });
+      }
+      return;
+    }
+
     setSubmittingDailyReport(true);
     try {
       await createEmployeePortalDailyReport({
@@ -267,20 +339,42 @@ export default function EmployeePortalPage() {
         key_achievements: dailyReportForm.key_achievements,
         pending_work: dailyReportForm.pending_work,
       });
-      toast({ title: "Success", description: "Daily work report submitted." });
+
+      if (!isAutoSubmit) {
+        toast({ title: "Success", description: "Daily work report submitted." });
+      }
+
+      clearDraftReport(dailyReportForm.report_date);
+      const today = new Date().toISOString().split('T')[0];
       setDailyReportForm({
-        report_date: "",
-        entries: DEFAULT_DAILY_REPORT_ENTRIES.map((entry) => ({ ...entry })),
+        report_date: today,
+        entries: getEntriesForDate(today).map((entry) => ({ ...entry })),
         key_achievements: "",
         pending_work: "",
       });
       loadData();
     } catch (error: any) {
-      toast({ title: "Error", description: error.message || "Failed to submit daily work report.", variant: "destructive" });
+      if (!isAutoSubmit) {
+        toast({ title: "Error", description: error.message || "Failed to submit daily work report.", variant: "destructive" });
+      }
     } finally {
       setSubmittingDailyReport(false);
     }
   };
+
+  // Auto-submit at 8:00 PM regardless of completion
+  useEffect(() => {
+    if (!dailyReportForm.report_date || dailyReportForm.entries.length === 0) return;
+
+    const checkAndAutoSubmit = () => {
+      if (shouldAutoSubmit()) {
+        handleDailyReportSubmit(null as any, true);
+      }
+    };
+
+    const timer = setInterval(checkAndAutoSubmit, 60000); // Check every minute
+    return () => clearInterval(timer);
+  }, [dailyReportForm]);
 
   const handleLeaveSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -700,7 +794,7 @@ export default function EmployeePortalPage() {
                     type="date"
                     className="max-w-xs"
                     value={dailyReportForm.report_date}
-                    onChange={(e) => setDailyReportForm({ ...dailyReportForm, report_date: e.target.value })}
+                    onChange={(e) => handleDailyReportDateChange(e.target.value)}
                   />
                   {dailyReportForm.report_date && isSunday(dailyReportForm.report_date) && (
                     <p className="text-xs text-red-600">Sundays are skipped - no report is required that day. Please pick another date.</p>
@@ -709,39 +803,23 @@ export default function EmployeePortalPage() {
 
                 <div className="space-y-2">
                   <Label>Work / Activity Log</Label>
-                  <div className="space-y-3">
+                  <p className="text-xs text-muted-foreground">You can save your progress and submit later. The form will auto-submit at 8:00 PM daily (except Sundays).</p>
+                  <div className="space-y-4">
                     {dailyReportForm.entries.map((entry, index) => (
-                      <div key={index} className="grid gap-2 rounded-xl border p-3 md:grid-cols-[0.9fr_1.3fr_1fr_auto]">
-                        <Input
-                          placeholder="Time (e.g. 8:30 AM - 10:30 AM)"
-                          value={entry.time}
-                          onChange={(e) => updateDailyReportEntry(index, "time", e.target.value)}
-                        />
-                        <Input
-                          placeholder="Work / Activity Completed"
+                      <div key={index} className="space-y-2 rounded-xl border p-4">
+                        <div className="flex items-center justify-between">
+                          <Label className="font-semibold text-base">{entry.time}</Label>
+                        </div>
+                        <Textarea
+                          placeholder="Describe your activities for this time period..."
+                          rows={4}
                           value={entry.activity}
-                          onChange={(e) => updateDailyReportEntry(index, "activity", e.target.value)}
+                          onChange={(e) => updateDailyReportEntry(index, e.target.value)}
+                          className="resize-none"
                         />
-                        <Input
-                          placeholder="Remarks"
-                          value={entry.remarks}
-                          onChange={(e) => updateDailyReportEntry(index, "remarks", e.target.value)}
-                        />
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="ghost"
-                          className="text-red-600 hover:bg-red-50"
-                          onClick={() => removeDailyReportEntry(index)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
                       </div>
                     ))}
                   </div>
-                  <Button type="button" size="sm" variant="outline" onClick={addDailyReportEntry}>
-                    <Plus className="h-4 w-4 mr-1" /> Add Time Block
-                  </Button>
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-2">
@@ -763,54 +841,245 @@ export default function EmployeePortalPage() {
                   </div>
                 </div>
 
-                <Button type="submit" disabled={submittingDailyReport}>
-                  {submittingDailyReport ? "Submitting..." : "Submit Daily Work Report"}
-                </Button>
+
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" onClick={handleSaveDraft}>
+                    Save Draft
+                  </Button>
+                  {isFormComplete(dailyReportForm.entries, dailyReportForm.key_achievements, dailyReportForm.pending_work) && (
+                    <Button type="submit" disabled={submittingDailyReport}>
+                      {submittingDailyReport ? "Submitting..." : "Submit Daily Work Report"}
+                    </Button>
+                  )}
+                </div>
               </form>
             </CardContent>
           </Card>
 
           <Card className="shadow-sm">
             <CardHeader>
-              <CardTitle>Recent Daily Reports</CardTitle>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <CardTitle>Recent Daily Reports</CardTitle>
+                <Input
+                  type="date"
+                  placeholder="Filter by date"
+                  value={reportDateFilter}
+                  onChange={(e) => setReportDateFilter(e.target.value)}
+                  className="max-w-xs"
+                />
+              </div>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="space-y-2">
               {dailyReports.length === 0 ? (
                 <div className="rounded-2xl border border-dashed p-6 text-sm text-muted-foreground">
                   No daily work reports yet. Submitted reports will show here.
                 </div>
               ) : (
-                dailyReports.map((report) => (
-                  <div key={report.id} className="rounded-2xl border p-4">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="space-y-1">
-                        <p className="text-sm font-semibold">{report.reportDate}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {report.approverRole ? `Approver: ${report.approverRole}` : "Self-certified"}
-                        </p>
-                      </div>
-                      <Badge className={getStatusClass(report.status)}>{formatStatus(report.status)}</Badge>
+                dailyReports
+                  .filter((report) => !reportDateFilter || report.reportDate === reportDateFilter)
+                  .map((report) => (
+                    <div key={report.id} className="rounded-2xl border">
+                      <button
+                        onClick={() => setViewingReportId(viewingReportId === report.id ? null : report.id)}
+                        className="w-full p-4 text-left hover:bg-gray-50 transition-colors flex items-center justify-between"
+                      >
+                        <div className="flex-1 space-y-1">
+                          <p className="text-sm font-semibold">{report.reportDate}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {report.approverRole ? `Approver: ${report.approverRole}` : "Self-certified"}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge className={getStatusClass(report.status)}>{formatStatus(report.status)}</Badge>
+                          <span className="text-gray-400 text-sm">
+                            {viewingReportId === report.id ? "▼" : "▶"}
+                          </span>
+                        </div>
+                      </button>
+
+                      {viewingReportId === report.id && (
+                        <div className="border-t p-4 bg-gray-50 space-y-3">
+                          <div className="space-y-2">
+                            <p className="text-sm font-semibold">Work / Activity Log</p>
+                            {report.entries && report.entries.length > 0 ? (
+                              <div className="space-y-2">
+                                {report.entries.map((entry, idx) => (
+                                  <div key={idx} className="rounded-lg border bg-white p-3">
+                                    <p className="text-xs font-medium text-gray-600">{entry.time}</p>
+                                    <p className="mt-1 text-sm text-gray-700">{entry.activity || "—"}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-xs text-muted-foreground">No activities recorded</p>
+                            )}
+                          </div>
+
+                          {report.keyAchievements && (
+                            <div>
+                              <p className="text-sm font-semibold mb-1">Key Achievements</p>
+                              <p className="text-sm text-gray-700">{report.keyAchievements}</p>
+                            </div>
+                          )}
+
+                          {report.pendingWork && (
+                            <div>
+                              <p className="text-sm font-semibold mb-1">Pending Work / Challenges</p>
+                              <p className="text-sm text-gray-700">{report.pendingWork}</p>
+                            </div>
+                          )}
+
+                          {report.status === "rejected" && report.rejectionReason && (
+                            <div className="rounded-lg bg-red-50 p-3">
+                              <p className="text-sm font-semibold text-red-600 mb-1">Rejection Reason</p>
+                              <p className="text-sm text-red-600">{report.rejectionReason}</p>
+                            </div>
+                          )}
+
+                          <div className="flex gap-2 pt-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setViewingReportId(null)}
+                            >
+                              Close
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    {report.keyAchievements && (
-                      <p className="mt-3 text-sm text-muted-foreground">
-                        <span className="font-medium text-foreground">Achievements: </span>
-                        {report.keyAchievements}
-                      </p>
-                    )}
-                    {report.pendingWork && (
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        <span className="font-medium text-foreground">Pending: </span>
-                        {report.pendingWork}
-                      </p>
-                    )}
-                    {report.status === "rejected" && report.rejectionReason && (
-                      <p className="mt-1 text-sm text-red-600">Reason: {report.rejectionReason}</p>
-                    )}
-                  </div>
-                ))
+                  ))
+              )}
+              {dailyReports.length > 0 && reportDateFilter && dailyReports.filter((r) => r.reportDate === reportDateFilter).length === 0 && (
+                <p className="text-sm text-muted-foreground text-center py-4">No reports found for this date.</p>
               )}
             </CardContent>
           </Card>
+
+          {isGMOrDirector && (
+            <Card className="shadow-sm xl:col-span-2">
+              <CardHeader>
+                <CardTitle>Pending Staff Reports - Resubmit</CardTitle>
+                <p className="text-sm text-muted-foreground mt-2">As a {user?.role?.name}, you can edit and resubmit pending reports from your staff members.</p>
+              </CardHeader>
+              <CardContent>
+                {pendingDailyReportApprovals.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No pending reports to review.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {pendingDailyReportApprovals.map((report) => (
+                      <div key={report.id} className="flex items-center justify-between rounded-lg border p-4">
+                        <div>
+                          <p className="font-medium">{report.employee}</p>
+                          <p className="text-xs text-muted-foreground">{report.reportDate}</p>
+                        </div>
+                        <Button
+                          size="sm"
+                          onClick={() => handleEditReport(report)}
+                        >
+                          Resubmit
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {editingReportId && editReportForm && (
+            <Card className="shadow-sm xl:col-span-2 border-blue-200 bg-blue-50">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Resubmit Daily Work Report</CardTitle>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setEditingReportId(null);
+                      setEditReportForm(null);
+                    }}
+                  >
+                    ✕
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleEditReportSubmit} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Work / Activity Log</Label>
+                    <div className="space-y-4">
+                      {editReportForm.entries.map((entry, index) => (
+                        <div key={index} className="space-y-2 rounded-xl border p-4">
+                          <Label className="font-semibold text-base">{entry.time}</Label>
+                          <Textarea
+                            placeholder="Describe your activities for this time period..."
+                            rows={4}
+                            value={entry.activity}
+                            onChange={(e) => {
+                              setEditReportForm((prev) => ({
+                                ...prev!,
+                                entries: prev!.entries.map((ent, i) => (i === index ? { ...ent, activity: e.target.value } : ent)),
+                              }));
+                            }}
+                            className="resize-none"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Key Achievements</Label>
+                      <Textarea
+                        rows={4}
+                        value={editReportForm.key_achievements}
+                        onChange={(e) =>
+                          setEditReportForm((prev) => ({
+                            ...prev!,
+                            key_achievements: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Pending Work / Challenges</Label>
+                      <Textarea
+                        rows={4}
+                        value={editReportForm.pending_work}
+                        onChange={(e) =>
+                          setEditReportForm((prev) => ({
+                            ...prev!,
+                            pending_work: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+
+
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        setEditingReportId(null);
+                        setEditReportForm(null);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    {isFormComplete(editReportForm.entries, editReportForm.key_achievements, editReportForm.pending_work) && (
+                      <Button type="submit" disabled={submittingEditReport}>
+                        {submittingEditReport ? "Resubmitting..." : "Resubmit Report"}
+                      </Button>
+                    )}
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         <TabsContent value="data-privacy">

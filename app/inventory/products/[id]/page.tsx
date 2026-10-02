@@ -269,7 +269,7 @@ export default function ProductDetailsPage() {
             <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl p-6 border border-green-100">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <p className="text-sm font-medium text-green-700 mb-1">Selling Price</p>
+                  <p className="text-sm font-medium text-green-700 mb-1">NSPV</p>
                   <p className="text-4xl font-bold text-green-900">Ksh. {productPrice.toFixed(2)}</p>
                 </div>
                 <div className="text-right">

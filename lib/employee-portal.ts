@@ -46,6 +46,10 @@ export async function getEmployeePortalDailyReports(status?: string): Promise<Da
   return response.daily_reports || [];
 }
 
+export async function deleteEmployeePortalDailyReport(id: string): Promise<void> {
+  await apiCall<any>(`/employee-portal/daily-reports/${id}`, "DELETE");
+}
+
 export async function createEmployeePortalDailyReport(data: {
   report_date: string;
   designation?: string;

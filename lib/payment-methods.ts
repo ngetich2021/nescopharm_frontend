@@ -1,11 +1,9 @@
 export const PAYMENT_METHODS = [
   { value: "cash", label: "Cash" },
-  { value: "bank_transfer", label: "Bank Transfer" },
-  { value: "mobile_money", label: "M-Pesa / Mobile Money" },
-  { value: "credit_card", label: "Credit Card" },
-  { value: "debit_card", label: "Debit Card" },
   { value: "cheque", label: "Cheque" },
-  { value: "other", label: "Other" },
+  { value: "mpesa", label: "M-Pesa" },
+  { value: "paybill", label: "Paybill" },
+  { value: "bank_transfer", label: "Bank Transfer" },
 ] as const
 
 export type PaymentMethodValue = typeof PAYMENT_METHODS[number]["value"]

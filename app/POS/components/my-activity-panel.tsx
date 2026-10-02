@@ -6,13 +6,12 @@ import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { Activity, CheckCircle2, RotateCcw, Loader2, FileText, CreditCard, Wallet } from "lucide-react"
+import { Activity, CheckCircle2, RotateCcw, Loader2, FileText } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/lib/auth-context"
 import { fetchQuotes, confirmQuote, requestQuoteChanges, type Quote } from "@/lib/quotes"
-import { getCustomers, fetchCustomerCreditTerms, type Customer, type CustomerCreditTerms } from "@/lib/customers"
+import { getCustomers, type Customer } from "@/lib/customers"
 import { useCart } from "./pos-interface"
-import { cn } from "@/lib/utils"
 
 // Only these states mean "still needs tracking" - accepted/rejected/expired
 // quotes and approved/rejected customers are done, so they drop off the list.
@@ -35,11 +34,6 @@ export function MyActivityPanel() {
   const [busyQuoteId, setBusyQuoteId] = useState<string | null>(null)
   const [changesNoteFor, setChangesNoteFor] = useState<string | null>(null)
   const [changesNote, setChangesNote] = useState("")
-
-  // A customer's credit isn't unlimited, so "Proceed" has to say which way
-  // this is being paid rather than silently always going through on credit.
-  const [creditTermsByCustomer, setCreditTermsByCustomer] = useState<Record<string, CustomerCreditTerms | null>>({})
-  const [paymentOptionByQuote, setPaymentOptionByQuote] = useState<Record<string, "instant" | "credit">>({})
 
   const load = () => {
     if (!user?.id) return
@@ -66,38 +60,10 @@ export function MyActivityPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, activityVersion])
 
-  useEffect(() => {
-    const toFetch = quotes
-      .filter((q) => q.status === "awaiting_rep_confirm" && q.customer_id && !(q.customer_id in creditTermsByCustomer))
-      .map((q) => q.customer_id)
-
-    if (toFetch.length === 0) return
-
-    toFetch.forEach((customerId) => {
-      fetchCustomerCreditTerms(customerId)
-        .then((terms) => {
-          setCreditTermsByCustomer((prev) => ({ ...prev, [customerId]: terms }))
-          const quote = quotes.find((q) => q.customer_id === customerId)
-          if (quote) {
-            const total = Number.parseFloat(quote.final_amount || quote.total_amount || "0")
-            const insufficientCredit = terms.available_credit !== null && total > Number(terms.available_credit)
-            setPaymentOptionByQuote((prev) => ({
-              ...prev,
-              [quote.id]: terms.payment_method === "credit" && !insufficientCredit ? "credit" : "instant",
-            }))
-          }
-        })
-        .catch(() => {
-          setCreditTermsByCustomer((prev) => ({ ...prev, [customerId]: null }))
-        })
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quotes])
-
   const handleProceed = async (quote: Quote) => {
     setBusyQuoteId(quote.id)
     try {
-      const order = await confirmQuote(quote.id, { payment_option: paymentOptionByQuote[quote.id] })
+      const order = await confirmQuote(quote.id)
       toast({
         title: "Order created",
         description: `${quote.quote_number} is now order ${order?.order_number || order?.id || ""}.`,
@@ -166,54 +132,12 @@ export function MyActivityPanel() {
 
                     {quote.status === "awaiting_rep_confirm" && (() => {
                       const total = Number.parseFloat(quote.final_amount || quote.total_amount || "0")
-                      const terms = quote.customer_id ? creditTermsByCustomer[quote.customer_id] : undefined
-                      const availableCredit = terms?.available_credit !== null && terms?.available_credit !== undefined
-                        ? Number(terms.available_credit)
-                        : null
-                      const insufficientCredit = availableCredit !== null && total > availableCredit
-                      const isCreditCustomer = terms?.payment_method === "credit"
-                      const selectedOption = paymentOptionByQuote[quote.id] || "instant"
 
                       return (
                       <div className="mt-3 space-y-2">
                         <div className="text-xs text-muted-foreground">
                           Total: {quote.currency} {total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </div>
-
-                        {isCreditCustomer && (
-                          <div className="space-y-1.5">
-                            {insufficientCredit && (
-                              <div className="text-xs text-red-700 bg-red-50 rounded px-2 py-1">
-                                Available credit {availableCredit !== null ? availableCredit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"} is short for this total — use Pay Instant.
-                              </div>
-                            )}
-                            <div className="flex gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => setPaymentOptionByQuote((prev) => ({ ...prev, [quote.id]: "credit" }))}
-                                disabled={insufficientCredit || isBusy}
-                                className={cn(
-                                  "flex-1 flex items-center justify-center gap-1 rounded-md border px-2 py-1.5 text-xs transition-colors",
-                                  selectedOption === "credit" ? "border-primary bg-primary/5 font-medium" : "border-gray-200 text-muted-foreground",
-                                  insufficientCredit && "opacity-40 cursor-not-allowed"
-                                )}
-                              >
-                                <CreditCard className="h-3 w-3" /> On Credit
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setPaymentOptionByQuote((prev) => ({ ...prev, [quote.id]: "instant" }))}
-                                disabled={isBusy}
-                                className={cn(
-                                  "flex-1 flex items-center justify-center gap-1 rounded-md border px-2 py-1.5 text-xs transition-colors",
-                                  selectedOption === "instant" ? "border-primary bg-primary/5 font-medium" : "border-gray-200 text-muted-foreground"
-                                )}
-                              >
-                                <Wallet className="h-3 w-3" /> Pay Instant
-                              </button>
-                            </div>
-                          </div>
-                        )}
 
                         {changesNoteFor === quote.id ? (
                           <div className="space-y-2">

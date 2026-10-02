@@ -21,6 +21,8 @@ import { Input } from "@/components/ui/input";
 import { PermissionGuard } from "@/components/PermissionGuard";
 import { LogisticsTable } from "@/app/logistics/logistics-table";
 import { LogisticsSummary } from "@/app/logistics/logistics-summary";
+import { DeliveryRatesTab } from "./DeliveryRatesTab";
+import { hasPermission } from "@/lib/rbac";
 
 export default function DispatchPage() {
   const [dispatches, setDispatches] = useState<OrderDispatch[]>([]);
@@ -40,7 +42,8 @@ export default function DispatchPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, userProfile } = useAuth();
+  const canViewDeliveryRates = hasPermission(userProfile as any, "can_view_delivery_rates");
 
   const fetchDispatches = async () => {
     setLoading(true);
@@ -246,6 +249,12 @@ export default function DispatchPage() {
               <Truck className="h-4 w-4" />
               Logistics
             </TabsTrigger>
+            {canViewDeliveryRates && (
+              <TabsTrigger value="delivery-rates" className="flex items-center gap-2">
+                <Package className="h-4 w-4" />
+                Delivery Rates
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="dispatches" className="space-y-6">
@@ -458,6 +467,12 @@ export default function DispatchPage() {
               <LogisticsTable />
             </Suspense>
           </TabsContent>
+
+          {canViewDeliveryRates && (
+            <TabsContent value="delivery-rates" className="space-y-6">
+              <DeliveryRatesTab />
+            </TabsContent>
+          )}
         </Tabs>
       </div>
     </PermissionGuard>

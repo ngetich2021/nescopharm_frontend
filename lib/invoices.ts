@@ -121,7 +121,9 @@ export interface InvoiceLineItem {
   tax_rate: number | string;
   etims_tax_type_code?: 'A' | 'B' | 'C' | 'D' | 'E';
   metadata?: {
+    batches?: { batch_number: string | null; expiry_date: string | null; quantity: number | null }[];
     etims_tax_type_code?: 'A' | 'B' | 'C' | 'D' | 'E';
+    price_label?: string | null;
     [key: string]: unknown;
   };
   tax_amount?: number | string;
@@ -132,6 +134,7 @@ export interface InvoiceLineItem {
     id: string;
     name: string;
     sku: string;
+    product_code?: string | null;
   };
   variant?: {
     id: string;

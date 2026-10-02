@@ -8,13 +8,13 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-import { 
-  Eye, 
-  Edit, 
-  Trash2, 
-  Send, 
-  Plus, 
-  Search, 
+import {
+  Eye,
+  Edit,
+  Trash2,
+  Send,
+  Plus,
+  Search,
   Filter,
   MoreHorizontal,
   Receipt,
@@ -28,6 +28,8 @@ import {
   ArrowUp,
   ArrowDown,
   ArrowUpDown,
+  Download,
+  FileText,
 } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { formatCurrency, formatDate } from "@/lib/utils"
@@ -239,6 +241,22 @@ export function InvoicesTable({ initialInvoices = [] }: InvoicesTableProps) {
               View Details
             </Link>
           </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <Link href={`/sales/invoices/${invoice.id}/document`}>
+              <FileText className="mr-2 h-4 w-4" />
+              View Document
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleDownloadPDF(invoice.id); }}>
+            <Download className="mr-2 h-4 w-4" />
+            Download PDF
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleDownloadCSV(invoice); }}>
+            <Download className="mr-2 h-4 w-4" />
+            Download CSV
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           {invoice.status === 'draft' && (
             <>
               <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleEditInvoice(invoice.id); }}>
@@ -291,6 +309,38 @@ export function InvoicesTable({ initialInvoices = [] }: InvoicesTableProps) {
       title: "Coming Soon",
       description: "WhatsApp functionality will be implemented soon",
     })
+  }
+
+  const handleDownloadPDF = (invoiceId: string) => {
+    // Open document page with download triggered via URL param
+    window.open(`/sales/invoices/${invoiceId}/document?download=1`, '_blank')
+  }
+
+  const handleDownloadCSV = (invoice: Invoice) => {
+    const headers = ['Invoice #', 'Customer', 'Amount', 'Status', 'Date', 'Due Date']
+    const values = [
+      invoice.invoice_number,
+      (invoice.customer as any)?.business_name || invoice.customer?.name || 'N/A',
+      formatCurrency(parseInvoiceAmount(invoice.total_amount)),
+      invoice.status,
+      formatDate(invoice.invoice_date),
+      formatDate(invoice.due_date),
+    ]
+
+    const csvContent = [
+      headers.join(','),
+      values.map(v => `"${v}"`).join(',')
+    ].join('\n')
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const link = document.createElement('a')
+    const url = URL.createObjectURL(blob)
+    link.setAttribute('href', url)
+    link.setAttribute('download', `invoice-${invoice.invoice_number}.csv`)
+    link.style.visibility = 'hidden'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
   }
 
   const handleRowClick = (invoiceId: string, event: React.MouseEvent) => {
